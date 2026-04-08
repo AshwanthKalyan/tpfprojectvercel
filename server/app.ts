@@ -6,7 +6,16 @@ import { registerRoutes } from "./routes";
 export async function createApp() {
   const app = express();
   const httpServer = createServer(app);
-  const clerk = clerkMiddleware();
+  let clerk:
+    | ReturnType<typeof clerkMiddleware>
+    | ((_req: Request, _res: Response, next: NextFunction) => void);
+
+  try {
+    clerk = clerkMiddleware();
+  } catch (error) {
+    console.error("Failed to initialize Clerk middleware:", error);
+    clerk = (_req, _res, next) => next();
+  }
 
   app.set("trust proxy", 1);
   app.use(express.json());
