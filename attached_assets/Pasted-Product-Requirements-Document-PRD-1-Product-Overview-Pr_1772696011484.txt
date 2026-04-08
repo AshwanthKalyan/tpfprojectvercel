@@ -1,0 +1,276 @@
+Product Requirements Document (PRD)
+1. Product Overview
+Product Name
+
+NITT Project Hub (working title)
+
+Product Description
+
+NITT Project Hub is a web platform that allows students of National Institute of Technology Tiruchirappalli to post project ideas or ongoing projects and recruit collaborators from within the college.
+
+Students can:
+
+Post projects they want to build
+
+Discover projects posted by other students
+
+Express interest in joining a project
+
+Upload their resume
+
+Allow project creators to review applicants and accept collaborators
+
+The goal is to encourage collaboration, interdisciplinary work, and faster team formation for academic, research, and hackathon projects.
+
+2. Problem Statement
+
+Students often have:
+
+Good project ideas but no team
+
+Skills but no project to join
+
+Difficulty finding collaborators across departments
+
+Current methods:
+
+WhatsApp groups
+
+Discord servers
+
+Personal connections
+
+These are unstructured and inefficient.
+
+A centralized system will make project discovery and team formation easier.
+
+3. Goals & Objectives
+Primary Goals
+
+Enable students to post projects easily
+
+Allow students to find projects matching their interests
+
+Provide a way to apply to projects
+
+Allow project creators to review applicants and select collaborators
+
+Success Metrics
+
+Number of projects posted
+
+Number of project applications
+
+Number of teams successfully formed
+
+Active student users
+
+4. Target Users
+Primary Users
+
+Students from National Institute of Technology Tiruchirappalli
+
+User Types
+1. Project Creator
+
+A student who posts a project and wants collaborators.
+
+Actions:
+
+Create project listing
+
+View interested applicants
+
+Review resumes
+
+Accept / reject applicants
+
+2. Applicant
+
+A student who wants to join projects.
+
+Actions:
+
+Browse projects
+
+Apply to projects
+
+Upload resume
+
+Track application status
+
+5. User Flow
+Flow 1 — Project Creator
+Login
+   |
+Create Project
+   |
+Project listed publicly
+   |
+Students apply
+   |
+Creator reviews applicants
+   |
+Accept / Reject applicants
+   |
+Team formed
+Flow 2 — Applicant
+Login
+   |
+Browse Projects
+   |
+Open project page
+   |
+Click "I'm Interested"
+   |
+Upload resume / profile
+   |
+Application submitted
+   |
+Wait for acceptance
+6. Core Features
+6.1 Authentication
+
+Users must login with college credentials.
+
+Possible methods:
+
+Email login (nitt.edu domain)
+
+OTP verification
+
+Google login (optional)
+
+Data Stored
+
+User:
+
+Name
+
+Email
+
+Department
+
+Year
+
+Skills
+
+Resume link
+
+6.2 User Profile
+
+Each user has a profile page.
+
+Profile Fields
+
+Name
+
+Department
+
+Year
+
+Skills
+
+Short bio
+
+Resume upload (PDF)
+
+GitHub / portfolio links
+
+6.3 Post a Project
+
+Users can create project listings.
+
+Fields
+
+Project Title
+
+Description
+
+Tech stack
+
+Skills required
+
+Number of collaborators needed
+
+Project type
+
+Research
+
+Hackathon
+
+Startup
+
+Course project
+
+Duration
+
+Contact info
+
+6.4 Browse Projects
+
+Students can view all active projects.
+
+Filters
+
+Department
+
+Tech stack
+
+Skills required
+
+Project type
+
+Recently posted
+
+6.5 Project Page
+
+Each project has its own page.
+
+Displays:
+
+Project description
+
+Required skills
+
+Creator profile
+
+Number of applicants
+
+Apply button
+
+6.6 Apply to a Project
+
+Applicant clicks "I'm Interested"
+
+Application includes:
+
+Resume
+
+Short message (optional)
+
+Application gets stored for creator review.
+
+6.7 Applicant Review Dashboard
+
+Project creator sees a list of applicants.
+
+Each applicant shows:
+
+Name
+
+Department
+
+Resume
+
+Skills
+
+Message
+
+Options:
+
+Accept
+
+Reject
+
+Keep Pending
