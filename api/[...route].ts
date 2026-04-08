@@ -1,70 +1,104 @@
 import "dotenv/config";
-import { attachErrorHandler, createApp } from "../server/app";
+import { Pool, neonConfig } from "@neondatabase/serverless";
 
-let appPromise: Promise<any> | null = null;
+neonConfig.poolQueryViaFetch = true;
 
-async function getApp() {
-  if (!appPromise) {
-    appPromise = createApp()
-      .then(({ app }) => {
-        attachErrorHandler(app);
-        return app;
-      })
-      .catch((error) => {
-        appPromise = null;
-        console.error("Failed to initialize app:", error);
-        throw error;
-      });
+let pool: Pool | null = null;
+
+function getPool() {
+  if (!process.env.DATABASE_URL) {
+    return null;
   }
 
-  return appPromise;
+  if (!pool) {
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+    });
+  }
+
+  return pool;
+}
+
+function sendJson(res: any, status: number, body: unknown) {
+  res.status(status);
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(body));
+}
+
+async function getProjects() {
+  const db = getPool();
+
+  if (!db) {
+    return [];
+  }
+
+  try {
+    const result = await db.query("SELECT * FROM projects ORDER BY created_at DESC");
+    return result.rows;
+  } catch (error) {
+    console.error("Ordered projects query failed:", error);
+  }
+
+  try {
+    const result = await db.query("SELECT * FROM projects");
+    return result.rows;
+  } catch (error) {
+    console.error("Projects query failed:", error);
+    return [];
+  }
+}
+
+async function getProjectById(projectId: number) {
+  const db = getPool();
+
+  if (!db) {
+    return null;
+  }
+
+  try {
+    const result = await db.query("SELECT * FROM projects WHERE id=$1", [projectId]);
+    return result.rows[0] ?? null;
+  } catch (error) {
+    console.error("Project by id query failed:", error);
+    return null;
+  }
 }
 
 export default async function handler(req: any, res: any) {
   try {
-    const app = await getApp();
+    const host = req.headers?.host || "localhost";
+    const url = new URL(req.url || "/", `https://${host}`);
+    const path = url.pathname;
+    const method = (req.method || "GET").toUpperCase();
 
-    await new Promise<void>((resolve, reject) => {
-      const cleanup = () => {
-        res.off?.("finish", onFinish);
-        res.off?.("close", onClose);
-      };
+    if (method === "GET" && path === "/api/me") {
+      return sendJson(res, 200, null);
+    }
 
-      const onFinish = () => {
-        cleanup();
-        resolve();
-      };
+    if (method === "POST" && path === "/api/logout") {
+      return sendJson(res, 200, { message: "Logged out" });
+    }
 
-      const onClose = () => {
-        cleanup();
-        resolve();
-      };
+    if (method === "GET" && path === "/api/projects") {
+      const projects = await getProjects();
+      return sendJson(res, 200, projects);
+    }
 
-      res.on?.("finish", onFinish);
-      res.on?.("close", onClose);
+    if (method === "GET" && path === "/api/my-projects") {
+      return sendJson(res, 200, []);
+    }
 
-      try {
-        app(req, res, (error: unknown) => {
-          cleanup();
-          if (error) {
-            reject(error);
-            return;
-          }
+    const projectMatch = path.match(/^\/api\/projects\/(\d+)$/);
+    if (method === "GET" && projectMatch) {
+      const project = await getProjectById(Number(projectMatch[1]));
+      return sendJson(res, 200, project);
+    }
 
-          resolve();
-        });
-      } catch (error) {
-        cleanup();
-        reject(error);
-      }
-    });
+    return sendJson(res, 404, { message: "Not found" });
   } catch (error: any) {
     console.error("API handler error:", error);
-
-    if (!res.headersSent) {
-      res.status(500).json({
-        message: error?.message || "API handler failed",
-      });
-    }
+    return sendJson(res, 500, {
+      message: error?.message || "API handler failed",
+    });
   }
 }
