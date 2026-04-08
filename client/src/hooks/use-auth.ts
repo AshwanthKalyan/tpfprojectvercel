@@ -29,15 +29,17 @@ export function useAuth() {
       }
 
       if (!response.ok) {
-        throw new Error(`${response.status}: ${response.statusText}`);
+        const text = await response.text();
+        console.error("Failed to fetch /api/me", response.status, text);
+        return null;
       }
 
       return response.json();
     },
     retry: false,
-    staleTime: 0,
-    refetchOnWindowFocus: true,
-    refetchOnMount: true,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
     enabled: isLoaded && isSignedIn,
   });
 

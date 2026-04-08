@@ -6,11 +6,25 @@ import { registerRoutes } from "./routes";
 export async function createApp() {
   const app = express();
   const httpServer = createServer(app);
+  const clerk = clerkMiddleware();
 
   app.set("trust proxy", 1);
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
-  app.use(clerkMiddleware());
+  app.use((req, res, next) => {
+    try {
+      const result = clerk(req, res, next);
+      if (result && typeof (result as Promise<unknown>).catch === "function") {
+        void (result as Promise<unknown>).catch((error) => {
+          console.error("Clerk middleware error:", error);
+          next();
+        });
+      }
+    } catch (error) {
+      console.error("Clerk middleware error:", error);
+      next();
+    }
+  });
 
   await registerRoutes(app);
 

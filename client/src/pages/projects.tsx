@@ -4,7 +4,7 @@ import { Plus, Search, Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export default function Projects() {
-  const { data: projects, isLoading, isError } = useProjects();
+  const { data: projects, isLoading, isError, error } = useProjects();
   const createProject = useCreateProject();
   const [, setLocation] = useLocation();
 
@@ -33,8 +33,11 @@ export default function Projects() {
 
   if (isError) {
     return (
-      <div className="flex items-center justify-center h-64 text-red-500 font-mono">
-        Failed to load projects. Please try again later.
+      <div className="flex min-h-[16rem] flex-col items-center justify-center gap-3 text-center font-mono">
+        <div className="text-red-500">Failed to load projects.</div>
+        <div className="max-w-xl text-sm text-muted-foreground">
+          {error instanceof Error ? error.message : "Please try again later."}
+        </div>
       </div>
     );
   }

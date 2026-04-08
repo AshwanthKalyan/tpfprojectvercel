@@ -8,9 +8,16 @@ export function useProjects() {
     queryKey: ["/api/projects"],
     queryFn: async () => {
       const res = await authedFetch("/api/projects");
-      if (!res.ok) throw new Error("Failed to fetch projects");
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to fetch projects");
+      }
       return res.json();
     },
+    retry: false,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
   });
 }
 
@@ -21,9 +28,16 @@ export function useMyProjects() {
     queryKey: ["/api/my-projects"],
     queryFn: async () => {
       const res = await authedFetch("/api/my-projects");
-      if (!res.ok) throw new Error("Failed to fetch your projects");
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to fetch your projects");
+      }
       return res.json();
     },
+    retry: false,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
   });
 }
 
@@ -34,10 +48,16 @@ export function useProject(id: number) {
     queryKey: ["/api/projects", id],
     queryFn: async () => {
       const res = await authedFetch(`/api/projects/${id}`);
-      if (!res.ok) throw new Error("Failed to fetch project");
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to fetch project");
+      }
       return res.json();
     },
     enabled: !!id,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
   });
 }
 
