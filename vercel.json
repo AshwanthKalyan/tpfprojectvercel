@@ -8,6 +8,22 @@
       "destination": "/index.html"
     },
     {
+      "source": "/projects/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/users/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/sign-in/:path*",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/sign-up/:path*",
+      "destination": "/index.html"
+    },
+    {
       "source": "/:path((?!api/)(?!.*\\..*).*)",
       "destination": "/index.html"
     }
