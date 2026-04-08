@@ -3,9 +3,189 @@ import { clerkClient, getAuth } from "@clerk/express";
 import { pool } from "./db";
 
 const NITT_EMAIL_REGEX = /^[a-z0-9]+@nitt\.edu$/i;
+const SESSION_EMAIL_CLAIM_KEYS = [
+  "primaryEmail",
+  "email",
+  "email_address",
+  "primary_email_address",
+] as const;
+const OPTIONAL_USER_COLUMNS = ["email", "first_name", "last_name"] as const;
 
 function isNittEmail(email: string | null | undefined) {
   return !!email && NITT_EMAIL_REGEX.test(email);
+}
+
+function getEmailFromSessionClaims(sessionClaims: unknown) {
+  if (!sessionClaims || typeof sessionClaims !== "object") {
+    return null;
+  }
+
+  for (const key of SESSION_EMAIL_CLAIM_KEYS) {
+    const value = (sessionClaims as Record<string, unknown>)[key];
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function mapUserRow(row: Record<string, any> | undefined | null) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    email: row.email ?? null,
+    firstName: row.first_name ?? row.firstname ?? row.firstName ?? null,
+    lastName: row.last_name ?? row.lastname ?? row.lastName ?? null,
+    department: row.department ?? null,
+    year: row.year_of_study ?? row.year ?? null,
+    skills: row.skills ?? null,
+    bio: row.bio ?? null,
+    githubUrl: row.github_url ?? row.githubUrl ?? null,
+    resumeUrl: row.resume_url ?? row.resumeUrl ?? null,
+  };
+}
+
+let usersTableColumnsPromise: Promise<Set<string>> | null = null;
+
+async function getUsersTableColumns() {
+  if (!usersTableColumnsPromise) {
+    usersTableColumnsPromise = pool
+      .query<{ column_name: string }>(
+        `SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'users'`
+      )
+      .then((result) => new Set(result.rows.map((row) => row.column_name)))
+      .catch((error) => {
+        usersTableColumnsPromise = null;
+        throw error;
+      });
+  }
+
+  return usersTableColumnsPromise;
+}
+
+async function getUserRowById(userId: string) {
+  const result = await pool.query("SELECT * FROM users WHERE id=$1", [userId]);
+  return result.rows[0] ?? null;
+}
+
+async function getUserIdByEmail(email: string) {
+  const result = await pool.query("SELECT id FROM users WHERE email=$1", [email]);
+  return result.rows[0]?.id ?? null;
+}
+
+async function getClerkUserSafe(userId: string) {
+  try {
+    return await clerkClient.users.getUser(userId);
+  } catch (error) {
+    console.warn(`Clerk lookup failed for ${userId}:`, error);
+    return null;
+  }
+}
+
+async function upsertUserRecord(params: {
+  id: string;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+}) {
+  const availableColumns = await getUsersTableColumns();
+  const columnNames = ["id"];
+  const values: Array<string | null> = [params.id];
+  const updateAssignments: string[] = [];
+
+  for (const column of OPTIONAL_USER_COLUMNS) {
+    if (!availableColumns.has(column)) {
+      continue;
+    }
+
+    const value =
+      column === "email"
+        ? params.email
+        : column === "first_name"
+          ? params.firstName
+          : params.lastName;
+
+    columnNames.push(column);
+    values.push(value);
+    updateAssignments.push(`${column} = EXCLUDED.${column}`);
+  }
+
+  const placeholders = values.map((_, index) => `$${index + 1}`).join(", ");
+  const conflictClause =
+    updateAssignments.length > 0
+      ? `ON CONFLICT (id) DO UPDATE SET ${updateAssignments.join(", ")}`
+      : "ON CONFLICT (id) DO NOTHING";
+
+  await pool.query(
+    `INSERT INTO users (${columnNames.join(", ")})
+     VALUES (${placeholders})
+     ${conflictClause}`,
+    values
+  );
+}
+
+async function updateUserRecord(
+  userId: string,
+  profile: {
+    firstName: string | null;
+    lastName: string | null;
+    department: string | null;
+    year: number | null;
+    skills: string[] | null;
+    bio: string | null;
+    githubUrl: string | null;
+    resumeUrl: string | null;
+  }
+) {
+  const availableColumns = await getUsersTableColumns();
+  const assignments: string[] = [];
+  const values: Array<string | number | string[] | null> = [];
+
+  const pushAssignment = (
+    column: string,
+    value: string | number | string[] | null
+  ) => {
+    if (!availableColumns.has(column)) {
+      return;
+    }
+
+    values.push(value);
+    assignments.push(`${column}=$${values.length}`);
+  };
+
+  pushAssignment("first_name", profile.firstName);
+  pushAssignment("last_name", profile.lastName);
+  pushAssignment("department", profile.department);
+
+  if (availableColumns.has("year_of_study")) {
+    pushAssignment("year_of_study", profile.year);
+  } else {
+    pushAssignment("year", profile.year);
+  }
+
+  pushAssignment("skills", profile.skills);
+  pushAssignment("bio", profile.bio);
+  pushAssignment("github_url", profile.githubUrl);
+  pushAssignment("resume_url", profile.resumeUrl);
+
+  if (assignments.length === 0) {
+    return;
+  }
+
+  values.push(userId);
+
+  await pool.query(
+    `UPDATE users
+     SET ${assignments.join(", ")}
+     WHERE id=$${values.length}`,
+    values
+  );
 }
 
 export async function registerRoutes(app: Express) {
@@ -33,44 +213,48 @@ export async function registerRoutes(app: Express) {
 
   // middleware to check login
   async function isAuthenticated(req: any, res: any, next: any) {
-    const { userId } = getAuth(req);
+    const auth = getAuth(req);
+    const { userId } = auth;
 
     if (!userId) {
       return res.status(401).json({ message: "Not logged in" });
     }
 
     try {
-      let email: string | null = null;
+      let email = getEmailFromSessionClaims(auth.sessionClaims);
       let dbUserId = userId;
+      let userRow: Record<string, any> | null = null;
 
-      const existingById = await pool.query(
-        "SELECT id, email FROM users WHERE id=$1",
-        [userId]
-      );
-
-      email = existingById.rows[0]?.email || null;
+      try {
+        userRow = await getUserRowById(userId);
+        email = userRow?.email || email;
+      } catch (dbError) {
+        console.warn("Auth user lookup warning:", dbError);
+      }
 
       if (!email) {
-        const clerkUser = await clerkClient.users.getUser(userId);
-        email = clerkUser.emailAddresses?.[0]?.emailAddress || null;
+        const clerkUser = await getClerkUserSafe(userId);
+        email = clerkUser?.emailAddresses?.[0]?.emailAddress || null;
       }
 
       if (!isNittEmail(email)) {
-        return res.status(403).json({ message: "Use nitt webmail only" });
-      }
-
-      if (!existingById.rows[0] && email) {
-        const existingByEmail = await pool.query(
-          "SELECT id FROM users WHERE email=$1",
-          [email]
-        );
-
-        if (existingByEmail.rows[0]) {
-          dbUserId = existingByEmail.rows[0].id;
+        if (email) {
+          return res.status(403).json({ message: "Use nitt webmail only" });
         }
       }
 
-      req.user = { id: dbUserId, email };
+      if (!userRow && email) {
+        try {
+          const existingUserId = await getUserIdByEmail(email);
+          if (existingUserId) {
+            dbUserId = existingUserId;
+          }
+        } catch (dbError) {
+          console.warn("Auth email lookup warning:", dbError);
+        }
+      }
+
+      req.user = { id: dbUserId, clerkUserId: userId, email };
       next();
     } catch (error) {
       console.error("Auth check error:", error);
@@ -83,81 +267,51 @@ export async function registerRoutes(app: Express) {
   // =========================
   app.get("/api/me", isAuthenticated, async (req: any, res) => {
     try {
-      let result = await pool.query(
-        `SELECT 
-          id,
-          email,
-          first_name,
-          last_name,
-          department,
-          year_of_study,
-          skills,
-          bio,
-          github_url,
-          resume_url
-        FROM users
-        WHERE id=$1`,
-        [req.user.id]
-      );
+      let user: Record<string, any> | null = null;
 
-      let user = result.rows[0];
+      try {
+        user = await getUserRowById(req.user.id);
+      } catch (dbError) {
+        console.warn("Current user lookup warning:", dbError);
+      }
 
       if (!user) {
-        const clerkUser = await clerkClient.users.getUser(req.user.id);
+        const clerkUser = await getClerkUserSafe(req.user.clerkUserId || req.user.id);
         const primaryEmail =
-          clerkUser.emailAddresses?.[0]?.emailAddress || null;
+          clerkUser?.emailAddresses?.[0]?.emailAddress || req.user.email || null;
 
-        await pool.query(
-          `INSERT INTO users (id, email, first_name, last_name)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (id) DO UPDATE
-           SET email = EXCLUDED.email,
-               first_name = EXCLUDED.first_name,
-               last_name = EXCLUDED.last_name`,
-          [
-            clerkUser.id,
-            primaryEmail,
-            clerkUser.firstName || null,
-            clerkUser.lastName || null,
-          ]
-        );
+        if (clerkUser) {
+          try {
+            await upsertUserRecord({
+              id: clerkUser.id,
+              email: primaryEmail,
+              firstName: clerkUser.firstName || null,
+              lastName: clerkUser.lastName || null,
+            });
 
-        result = await pool.query(
-          `SELECT 
-            id,
-            email,
-            first_name,
-            last_name,
-            department,
-            year_of_study,
-            skills,
-            bio,
-            github_url,
-            resume_url
-          FROM users
-          WHERE id=$1`,
-          [req.user.id]
-        );
-
-        user = result.rows[0];
+            user = await getUserRowById(req.user.id);
+          } catch (dbError) {
+            console.warn("Current user upsert warning:", dbError);
+          }
+        }
       }
 
       if (!user) {
-        return res.status(404).json({ message: "User not found" });
+        return res.json({
+          id: req.user.id,
+          email: req.user.email ?? null,
+          firstName: null,
+          lastName: null,
+          department: null,
+          year: null,
+          skills: null,
+          bio: null,
+          githubUrl: null,
+          resumeUrl: null,
+        });
       }
 
-      res.json({
-        id: user.id,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        department: user.department,
-        year: user.year_of_study,
-        skills: user.skills,
-        bio: user.bio,
-        githubUrl: user.github_url,
-        resumeUrl: user.resume_url,
-      });
+      res.json(mapUserRow(user));
     } catch (err) {
       console.error(err);
       res.status(500).json({ message: "Failed to fetch user" });
@@ -182,29 +336,16 @@ export async function registerRoutes(app: Express) {
         resumeUrl,
       } = req.body;
 
-      await pool.query(
-        `UPDATE users 
-        SET first_name=$1,
-            last_name=$2,
-            department=$3,
-            year_of_study=$4,
-            skills=$5,
-            bio=$6,
-            github_url=$7,
-            resume_url=$8
-        WHERE id=$9`,
-        [
-          firstName,
-          lastName,
-          department,
-          year,
-          skills,
-          bio,
-          githubUrl,
-          resumeUrl,
-          userId,
-        ]
-      );
+      await updateUserRecord(userId, {
+        firstName: firstName ?? null,
+        lastName: lastName ?? null,
+        department: department ?? null,
+        year: year ?? null,
+        skills: Array.isArray(skills) ? skills : null,
+        bio: bio ?? null,
+        githubUrl: githubUrl ?? null,
+        resumeUrl: resumeUrl ?? null,
+      });
 
       res.json({ message: "Profile updated successfully" });
     } catch (error) {
@@ -219,42 +360,13 @@ export async function registerRoutes(app: Express) {
   app.get("/api/users/:id", isAuthenticated, async (req: any, res: any) => {
     try {
       const userId = req.params.id;
-
-      const result = await pool.query(
-        `SELECT 
-          id,
-          email,
-          first_name,
-          last_name,
-          department,
-          year_of_study,
-          skills,
-          bio,
-          github_url,
-          resume_url
-        FROM users
-        WHERE id=$1`,
-        [userId]
-      );
-
-      const user = result.rows[0];
+      const user = await getUserRowById(userId);
 
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
 
-      res.json({
-        id: user.id,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        department: user.department,
-        year: user.year_of_study,
-        skills: user.skills,
-        bio: user.bio,
-        githubUrl: user.github_url,
-        resumeUrl: user.resume_url,
-      });
+      res.json(mapUserRow(user));
     } catch (error) {
       console.error("FETCH USER BY ID ERROR:", error);
       res.status(500).json({ message: "Failed to fetch user" });
