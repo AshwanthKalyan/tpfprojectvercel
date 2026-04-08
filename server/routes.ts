@@ -1,6 +1,6 @@
 ﻿import { Express } from "express";
 import { clerkClient, getAuth } from "@clerk/express";
-import { pool } from "./db";
+import { hasDatabaseUrl, pool } from "./db";
 
 const NITT_EMAIL_REGEX = /^[a-z0-9]+@nitt\.edu$/i;
 const SESSION_EMAIL_CLAIM_KEYS = [
@@ -213,14 +213,14 @@ export async function registerRoutes(app: Express) {
 
   // middleware to check login
   async function isAuthenticated(req: any, res: any, next: any) {
-    const auth = getAuth(req);
-    const { userId } = auth;
-
-    if (!userId) {
-      return res.status(401).json({ message: "Not logged in" });
-    }
-
     try {
+      const auth = req.auth ?? getAuth(req);
+      const { userId } = auth;
+
+      if (!userId) {
+        return res.status(401).json({ message: "Not logged in" });
+      }
+
       let email = getEmailFromSessionClaims(auth.sessionClaims);
       let dbUserId = userId;
       let userRow: Record<string, any> | null = null;
@@ -258,7 +258,7 @@ export async function registerRoutes(app: Express) {
       next();
     } catch (error) {
       console.error("Auth check error:", error);
-      res.status(500).json({ message: "Auth check failed" });
+      res.status(401).json({ message: "Authentication is unavailable" });
     }
   }
 
@@ -446,7 +446,12 @@ export async function registerRoutes(app: Express) {
 
       res.json(result.rows);
     } catch (error) {
-      console.error(error);
+      console.error("FETCH PROJECTS ERROR:", error);
+
+      if (!hasDatabaseUrl) {
+        return res.json([]);
+      }
+
       res.status(500).json({ message: "Failed to fetch projects" });
     }
   });
@@ -463,7 +468,12 @@ export async function registerRoutes(app: Express) {
 
       res.json(result.rows);
     } catch (error) {
-      console.error(error);
+      console.error("FETCH MY PROJECTS ERROR:", error);
+
+      if (!hasDatabaseUrl) {
+        return res.json([]);
+      }
+
       res.status(500).json({ message: "Failed to fetch your projects" });
     }
   });
