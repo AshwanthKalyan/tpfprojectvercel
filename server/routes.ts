@@ -438,8 +438,12 @@ export async function registerRoutes(app: Express) {
   // =========================
   // GET ALL PROJECTS
   // =========================
-  app.get("/api/projects", isAuthenticated, async (_req, res) => {
+  app.get("/api/projects", async (_req, res) => {
     try {
+      if (!hasDatabaseUrl) {
+        return res.json([]);
+      }
+
       const result = await pool.query(
         "SELECT * FROM projects ORDER BY created_at DESC"
       );
@@ -447,12 +451,7 @@ export async function registerRoutes(app: Express) {
       res.json(result.rows);
     } catch (error) {
       console.error("FETCH PROJECTS ERROR:", error);
-
-      if (!hasDatabaseUrl) {
-        return res.json([]);
-      }
-
-      res.status(500).json({ message: "Failed to fetch projects" });
+      return res.json([]);
     }
   });
 
@@ -461,6 +460,10 @@ export async function registerRoutes(app: Express) {
   // =========================
   app.get("/api/my-projects", isAuthenticated, async (req, res) => {
     try {
+      if (!hasDatabaseUrl) {
+        return res.json([]);
+      }
+
       const result = await pool.query(
         "SELECT * FROM projects WHERE owner_id=$1 ORDER BY created_at DESC",
         [req.user.id]
@@ -481,13 +484,22 @@ export async function registerRoutes(app: Express) {
   // =========================
   // SINGLE PROJECT
   // =========================
-  app.get("/api/projects/:id", isAuthenticated, async (req, res) => {
-    const result = await pool.query(
-      "SELECT * FROM projects WHERE id=$1",
-      [req.params.id]
-    );
+  app.get("/api/projects/:id", async (req, res) => {
+    try {
+      if (!hasDatabaseUrl) {
+        return res.json(null);
+      }
 
-    res.json(result.rows[0]);
+      const result = await pool.query(
+        "SELECT * FROM projects WHERE id=$1",
+        [req.params.id]
+      );
+
+      res.json(result.rows[0] ?? null);
+    } catch (error) {
+      console.error("FETCH PROJECT ERROR:", error);
+      res.status(500).json({ message: "Failed to fetch project" });
+    }
   });
 
   // =========================

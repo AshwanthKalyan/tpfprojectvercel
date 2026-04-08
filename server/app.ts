@@ -6,15 +6,21 @@ import { registerRoutes } from "./routes";
 export async function createApp() {
   const app = express();
   const httpServer = createServer(app);
+  const hasClerkServerKey = Boolean(process.env.CLERK_SECRET_KEY);
   let clerk:
     | ReturnType<typeof clerkMiddleware>
     | ((_req: Request, _res: Response, next: NextFunction) => void);
 
-  try {
-    clerk = clerkMiddleware();
-  } catch (error) {
-    console.error("Failed to initialize Clerk middleware:", error);
+  if (!hasClerkServerKey) {
+    console.warn("CLERK_SECRET_KEY is not set. Server auth middleware is disabled.");
     clerk = (_req, _res, next) => next();
+  } else {
+    try {
+      clerk = clerkMiddleware();
+    } catch (error) {
+      console.error("Failed to initialize Clerk middleware:", error);
+      clerk = (_req, _res, next) => next();
+    }
   }
 
   app.set("trust proxy", 1);
