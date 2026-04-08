@@ -31,6 +31,22 @@ function sendJson(res: any, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
+function getRequestPath(req: any) {
+  const routeParam = req.query?.route;
+
+  if (Array.isArray(routeParam) && routeParam.length > 0) {
+    return `/api/${routeParam.map((segment) => encodeURIComponent(String(segment))).join("/")}`;
+  }
+
+  if (typeof routeParam === "string" && routeParam.length > 0) {
+    return `/api/${routeParam}`;
+  }
+
+  const host = req.headers?.host || "localhost";
+  const url = new URL(req.url || "/", `https://${host}`);
+  return url.pathname;
+}
+
 function decodeJwtPayload(token: string) {
   try {
     const [, payload] = token.split(".");
@@ -515,9 +531,7 @@ async function updateApplicationStatus(
 
 export default async function handler(req: any, res: any) {
   try {
-    const host = req.headers?.host || "localhost";
-    const url = new URL(req.url || "/", `https://${host}`);
-    const path = url.pathname;
+    const path = getRequestPath(req);
     const method = (req.method || "GET").toUpperCase();
     const authUser = getAuthUser(req);
 
