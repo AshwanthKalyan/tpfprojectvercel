@@ -52,7 +52,10 @@ export function useCreateApplication(projectId: number) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error("Failed to apply");
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to apply");
+      }
       return api.applications.create.responses[201].parse(await res.json());
     },
     onSuccess: () => {
@@ -73,7 +76,10 @@ export function useUpdateApplicationStatus() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
-      if (!res.ok) throw new Error("Failed to update status");
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to update status");
+      }
       return api.applications.updateStatus.responses[200].parse(await res.json());
     },
     onSuccess: (_, variables) => {

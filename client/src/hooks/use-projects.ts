@@ -85,7 +85,10 @@ export function useCreateProject() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error("Failed to create project");
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to create project");
+      }
       return res.json();
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/projects"] }),
@@ -103,11 +106,15 @@ export function useUpdateProject() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error("Failed to update project");
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to update project");
+      }
       return res.json();
     },
     onSuccess: (updatedProject) => {
       queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/my-projects"] });
       queryClient.invalidateQueries({ queryKey: ["/api/projects", updatedProject.id] });
     },
   });

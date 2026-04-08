@@ -93,7 +93,20 @@ export default function ProjectDetails() {
         message: (fd.get("message") as string) || null,
       },
       {
-        onSuccess: () => setShowApply(false),
+        onSuccess: () => {
+          toast({
+            title: "Application sent",
+            description: "Your application has been submitted.",
+          });
+          setShowApply(false);
+        },
+        onError: (error) => {
+          toast({
+            title: "Apply failed",
+            description:
+              error instanceof Error ? error.message : "Unable to submit application.",
+          });
+        },
       }
     );
   };

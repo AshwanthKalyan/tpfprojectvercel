@@ -348,7 +348,32 @@ async function createApplication(projectId: number, body: any, authUser: AuthUse
     throw new Error("DATABASE_URL is not set");
   }
 
+  const project = await getProjectById(projectId);
+  if (!project) {
+    throw new Error("Project not found");
+  }
+
+  if (project.owner_id === authUser.userId) {
+    throw new Error("Cannot apply to your own project");
+  }
+
   await ensureUser(authUser);
+
+  try {
+    const existing = await db.query(
+      "SELECT id FROM applications WHERE project_id=$1 AND applicant_id=$2",
+      [projectId, authUser.userId]
+    );
+
+    if (existing.rows[0]) {
+      throw new Error("Already applied");
+    }
+  } catch (error: any) {
+    if (error instanceof Error && error.message === "Already applied") {
+      throw error;
+    }
+    console.error("Existing application lookup failed:", error);
+  }
 
   const result = await db.query(
     `INSERT INTO applications
@@ -357,6 +382,124 @@ async function createApplication(projectId: number, body: any, authUser: AuthUse
      RETURNING *`,
     [projectId, authUser.userId, body.resumeUrl ?? null, body.message ?? null]
   );
+
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    applicantId: row.applicant_id,
+    resumeUrl: row.resume_url,
+    message: row.message,
+    status: row.status,
+    createdAt: row.created_at,
+  };
+}
+
+async function updateProject(projectId: number, body: any, authUser: AuthUser) {
+  const db = getPool();
+  if (!db) {
+    throw new Error("DATABASE_URL is not set");
+  }
+
+  const project = await getProjectById(projectId);
+  if (!project) {
+    throw new Error("Project not found");
+  }
+
+  if (project.owner_id !== authUser.userId) {
+    throw new Error("Not authorized");
+  }
+
+  const projectColumns = await getTableColumns("projects");
+  const assignments: string[] = [];
+  const values: any[] = [];
+
+  const add = (column: string, value: any) => {
+    if (!projectColumns.has(column) || typeof value === "undefined") {
+      return;
+    }
+
+    values.push(value);
+    assignments.push(`${column}=$${values.length}`);
+  };
+
+  add("title", body.title);
+  add("description", body.description);
+  add("duration", body.duration);
+  add("comms_link", body.comms_link);
+
+  if (assignments.length === 0) {
+    return project;
+  }
+
+  values.push(projectId);
+  values.push(authUser.userId);
+
+  const result = await db.query(
+    `UPDATE projects
+     SET ${assignments.join(", ")}
+     WHERE id=$${values.length - 1} AND owner_id=$${values.length}
+     RETURNING *`,
+    values
+  );
+
+  return result.rows[0] ?? project;
+}
+
+async function deleteProject(projectId: number, authUser: AuthUser) {
+  const db = getPool();
+  if (!db) {
+    throw new Error("DATABASE_URL is not set");
+  }
+
+  const project = await getProjectById(projectId);
+  if (!project) {
+    throw new Error("Project not found");
+  }
+
+  if (project.owner_id !== authUser.userId) {
+    throw new Error("Not authorized");
+  }
+
+  try {
+    await db.query("DELETE FROM applications WHERE project_id=$1", [projectId]);
+  } catch (error) {
+    console.warn("Delete project applications warning:", error);
+  }
+
+  await db.query("DELETE FROM projects WHERE id=$1 AND owner_id=$2", [
+    projectId,
+    authUser.userId,
+  ]);
+}
+
+async function updateApplicationStatus(
+  applicationId: number,
+  status: "pending" | "accepted" | "rejected",
+  authUser: AuthUser
+) {
+  const db = getPool();
+  if (!db) {
+    throw new Error("DATABASE_URL is not set");
+  }
+
+  const result = await db.query(
+    `UPDATE applications a
+     SET status=$1
+     WHERE a.id=$2
+       AND EXISTS (
+         SELECT 1
+         FROM projects p
+         WHERE p.id = a.project_id
+           AND p.owner_id = $3
+       )
+     RETURNING *`,
+    [status, applicationId, authUser.userId]
+  );
+
+  if (!result.rows[0]) {
+    throw new Error("Application not found");
+  }
 
   const row = result.rows[0];
   return {
@@ -433,6 +576,25 @@ export default async function handler(req: any, res: any) {
       return sendJson(res, project ? 200 : 404, project ?? { message: "Project not found" });
     }
 
+    if (method === "PATCH" && projectMatch) {
+      if (!authUser) {
+        return sendJson(res, 401, { message: "Not logged in" });
+      }
+
+      const body = await parseJsonBody(req);
+      const project = await updateProject(Number(projectMatch[1]), body, authUser);
+      return sendJson(res, 200, project);
+    }
+
+    if (method === "DELETE" && projectMatch) {
+      if (!authUser) {
+        return sendJson(res, 401, { message: "Not logged in" });
+      }
+
+      await deleteProject(Number(projectMatch[1]), authUser);
+      return sendJson(res, 200, { message: "Project deleted" });
+    }
+
     const projectApplicationsMatch = path.match(
       /^\/api\/projects\/(\d+)\/applications$/
     );
@@ -458,11 +620,39 @@ export default async function handler(req: any, res: any) {
       return sendJson(res, 201, application);
     }
 
+    const applicationStatusMatch = path.match(/^\/api\/applications\/(\d+)\/status$/);
+    if (method === "PATCH" && applicationStatusMatch) {
+      if (!authUser) {
+        return sendJson(res, 401, { message: "Not logged in" });
+      }
+
+      const body = await parseJsonBody(req);
+      const status =
+        body?.status === "accepted" || body?.status === "rejected"
+          ? body.status
+          : "pending";
+      const application = await updateApplicationStatus(
+        Number(applicationStatusMatch[1]),
+        status,
+        authUser
+      );
+      return sendJson(res, 200, application);
+    }
+
     return sendJson(res, 404, { message: "Not found" });
   } catch (error: any) {
     console.error("API handler error:", error);
-    return sendJson(res, 500, {
-      message: error?.message || "API handler failed",
-    });
+    const message = error?.message || "API handler failed";
+    const status =
+      message === "Not logged in"
+        ? 401
+        : message === "Not authorized"
+          ? 403
+          : message === "Project not found" || message === "Application not found"
+            ? 404
+            : message === "Already applied" || message === "Cannot apply to your own project"
+              ? 409
+              : 500;
+    return sendJson(res, status, { message });
   }
 }
