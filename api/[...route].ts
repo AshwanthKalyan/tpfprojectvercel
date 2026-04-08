@@ -531,6 +531,8 @@ async function updateApplicationStatus(
 
 export default async function handler(req: any, res: any) {
   try {
+    const host = req.headers?.host || "localhost";
+    const url = new URL(req.url || "/", `https://${host}`);
     const path = getRequestPath(req);
     const method = (req.method || "GET").toUpperCase();
     const authUser = getAuthUser(req);
@@ -561,6 +563,16 @@ export default async function handler(req: any, res: any) {
     }
 
     if (method === "GET" && path === "/api/projects") {
+      const requestedId = Number(url.searchParams.get("id") || 0);
+      if (requestedId) {
+        const project = await getProjectById(requestedId);
+        return sendJson(
+          res,
+          project ? 200 : 404,
+          project ?? { message: "Project not found" }
+        );
+      }
+
       const projects = await getProjects();
       return sendJson(res, 200, projects);
     }
@@ -573,6 +585,35 @@ export default async function handler(req: any, res: any) {
       const body = await parseJsonBody(req);
       const project = await createProject(body, authUser);
       return sendJson(res, 201, project);
+    }
+
+    if (method === "PATCH" && path === "/api/projects") {
+      if (!authUser) {
+        return sendJson(res, 401, { message: "Not logged in" });
+      }
+
+      const projectId = Number(url.searchParams.get("id") || 0);
+      if (!projectId) {
+        return sendJson(res, 400, { message: "Project not found" });
+      }
+
+      const body = await parseJsonBody(req);
+      const project = await updateProject(projectId, body, authUser);
+      return sendJson(res, 200, project);
+    }
+
+    if (method === "DELETE" && path === "/api/projects") {
+      if (!authUser) {
+        return sendJson(res, 401, { message: "Not logged in" });
+      }
+
+      const projectId = Number(url.searchParams.get("id") || 0);
+      if (!projectId) {
+        return sendJson(res, 400, { message: "Project not found" });
+      }
+
+      await deleteProject(projectId, authUser);
+      return sendJson(res, 200, { message: "Project deleted" });
     }
 
     if (method === "GET" && path === "/api/my-projects") {
@@ -634,6 +675,27 @@ export default async function handler(req: any, res: any) {
       return sendJson(res, 201, application);
     }
 
+    if (method === "GET" && path === "/api/project-applications") {
+      const projectId = Number(url.searchParams.get("projectId") || 0);
+      const applications = await getApplicationsForProject(projectId, authUser);
+      return sendJson(res, 200, applications);
+    }
+
+    if (method === "POST" && path === "/api/project-applications") {
+      if (!authUser) {
+        return sendJson(res, 401, { message: "Not logged in" });
+      }
+
+      const projectId = Number(url.searchParams.get("projectId") || 0);
+      if (!projectId) {
+        return sendJson(res, 400, { message: "Project not found" });
+      }
+
+      const body = await parseJsonBody(req);
+      const application = await createApplication(projectId, body, authUser);
+      return sendJson(res, 201, application);
+    }
+
     const applicationStatusMatch = path.match(/^\/api\/applications\/(\d+)\/status$/);
     if (method === "PATCH" && applicationStatusMatch) {
       if (!authUser) {
@@ -647,6 +709,29 @@ export default async function handler(req: any, res: any) {
           : "pending";
       const application = await updateApplicationStatus(
         Number(applicationStatusMatch[1]),
+        status,
+        authUser
+      );
+      return sendJson(res, 200, application);
+    }
+
+    if (method === "PATCH" && path === "/api/application-status") {
+      if (!authUser) {
+        return sendJson(res, 401, { message: "Not logged in" });
+      }
+
+      const applicationId = Number(url.searchParams.get("id") || 0);
+      if (!applicationId) {
+        return sendJson(res, 400, { message: "Application not found" });
+      }
+
+      const body = await parseJsonBody(req);
+      const status =
+        body?.status === "accepted" || body?.status === "rejected"
+          ? body.status
+          : "pending";
+      const application = await updateApplicationStatus(
+        applicationId,
         status,
         authUser
       );

@@ -8,12 +8,15 @@ export function useProjectApplications(projectId: number) {
   return useQuery({
     queryKey: [api.applications.listForProject.path, projectId],
     queryFn: async () => {
-      const url = buildUrl(api.applications.listForProject.path, { projectId });
+      const url = `/api/project-applications?projectId=${projectId}`;
       const res = await authedFetch(url);
       if (!res.ok) throw new Error("Failed to fetch applications");
-      return api.applications.listForProject.responses[200].parse(await res.json());
+      return await res.json();
     },
     enabled: !!projectId,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
   });
 }
 
@@ -46,9 +49,9 @@ export function useCreateApplication(projectId: number) {
   const authedFetch = useAuthedFetch();
   return useMutation({
     mutationFn: async (data: Omit<InsertApplication, "projectId" | "applicantId" | "status">) => {
-      const url = buildUrl(api.applications.create.path, { projectId });
+      const url = `/api/project-applications?projectId=${projectId}`;
       const res = await authedFetch(url, {
-        method: api.applications.create.method,
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
@@ -56,7 +59,7 @@ export function useCreateApplication(projectId: number) {
         const text = await res.text();
         throw new Error(text || "Failed to apply");
       }
-      return api.applications.create.responses[201].parse(await res.json());
+      return await res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.applications.listForProject.path, projectId] });
@@ -70,9 +73,9 @@ export function useUpdateApplicationStatus() {
   const authedFetch = useAuthedFetch();
   return useMutation({
     mutationFn: async ({ id, status }: { id: number; status: "pending" | "accepted" | "rejected" }) => {
-      const url = buildUrl(api.applications.updateStatus.path, { id });
+      const url = `/api/application-status?id=${id}`;
       const res = await authedFetch(url, {
-        method: api.applications.updateStatus.method,
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
@@ -80,7 +83,7 @@ export function useUpdateApplicationStatus() {
         const text = await res.text();
         throw new Error(text || "Failed to update status");
       }
-      return api.applications.updateStatus.responses[200].parse(await res.json());
+      return await res.json();
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: [api.applications.listForProject.path] });

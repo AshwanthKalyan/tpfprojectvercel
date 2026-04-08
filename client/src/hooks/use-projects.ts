@@ -47,7 +47,7 @@ export function useProject(id: number) {
   return useQuery({
     queryKey: ["/api/projects", id],
     queryFn: async () => {
-      const res = await authedFetch(`/api/projects/${id}`);
+      const res = await authedFetch(`/api/projects?id=${id}`);
       if (res.ok) {
         return res.json();
       }
@@ -101,7 +101,7 @@ export function useUpdateProject() {
   const authedFetch = useAuthedFetch();
   return useMutation({
     mutationFn: async (data: any) => {
-      const res = await authedFetch(`/api/projects/${data.id}`, {
+      const res = await authedFetch(`/api/projects?id=${data.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -126,7 +126,7 @@ export function useDeleteProject() {
   const authedFetch = useAuthedFetch();
   return useMutation({
     mutationFn: async (id: number) => {
-      const res = await authedFetch(`/api/projects/${id}`, { method: "DELETE" });
+      const res = await authedFetch(`/api/projects?id=${id}`, { method: "DELETE" });
       if (!res.ok) {
         const text = await res.text();
         const message = text ? (() => {
