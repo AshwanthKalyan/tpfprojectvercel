@@ -1,9 +1,10 @@
 import { useMyProjects } from "@/hooks/use-projects";
 import { ExternalLink, Plus, Terminal } from "lucide-react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 
 export default function MyProjects() {
   const { data: projects, isLoading, isError } = useMyProjects();
+  const [, setLocation] = useLocation();
 
   if (isLoading) {
     return (
@@ -51,13 +52,14 @@ export default function MyProjects() {
             className="border border-primary/20 bg-card p-6 flex flex-col gap-3"
           >
             <h3 className="text-xl font-bold">
-              <Link
-                href={`/projects/${project.id}`}
+              <button
+                type="button"
+                onClick={() => setLocation(`/projects/${project.id}`)}
                 className="flex items-center gap-2 hover:text-primary"
               >
                 {project.title || "Untitled Project"}
                 <ExternalLink className="h-4 w-4 text-muted-foreground" />
-              </Link>
+              </button>
             </h3>
 
             {project.description && (

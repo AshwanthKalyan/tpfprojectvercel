@@ -48,11 +48,24 @@ export function useProject(id: number) {
     queryKey: ["/api/projects", id],
     queryFn: async () => {
       const res = await authedFetch(`/api/projects/${id}`);
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || "Failed to fetch project");
+      if (res.ok) {
+        return res.json();
       }
-      return res.json();
+
+      const fallbackRes = await authedFetch("/api/projects");
+      if (fallbackRes.ok) {
+        const projects = await fallbackRes.json();
+        const project = Array.isArray(projects)
+          ? projects.find((candidate: any) => Number(candidate?.id) === id)
+          : null;
+
+        if (project) {
+          return project;
+        }
+      }
+
+      const text = await res.text();
+      throw new Error(text || "Failed to fetch project");
     },
     enabled: !!id,
     retry: false,

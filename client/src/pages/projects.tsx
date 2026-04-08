@@ -1,5 +1,5 @@
 import { useProjects, useCreateProject } from "@/hooks/use-projects";
-import { Link, useLocation } from "wouter";
+import { useLocation } from "wouter";
 import { Plus, Search, Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -143,10 +143,11 @@ export default function Projects() {
       {filteredProjects && filteredProjects.length > 0 ? (
         <div className="columns-1 md:columns-2 xl:columns-3 gap-6">
           {filteredProjects.map((project: any) => (
-            <Link
+            <button
               key={project.id}
-              href={`/projects/${project.id}`}
-              className="mb-6 block break-inside-avoid"
+              type="button"
+              onClick={() => setLocation(`/projects/${project.id}`)}
+              className="mb-6 block w-full break-inside-avoid text-left"
             >
               <div className="border p-6 bg-background/20 hover:bg-background/40 transition rounded-lg shadow-md hover:shadow-lg cursor-pointer flex flex-col gap-3 min-h-[220px]">
                 <div className="flex items-center justify-between">
@@ -171,7 +172,7 @@ export default function Projects() {
                   </div>
                 )}
               </div>
-            </Link>
+            </button>
           ))}
         </div>
       ) : (
