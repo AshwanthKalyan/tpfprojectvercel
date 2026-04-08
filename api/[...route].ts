@@ -79,9 +79,61 @@ function getAuthUser(req: any): AuthUser | null {
     (typeof payload.email_address === "string" && payload.email_address) ||
     (typeof payload.primary_email_address === "string" &&
       payload.primary_email_address) ||
-    `${userId}@nitt.edu`;
+    null;
 
   return { userId, email };
+}
+
+function getRollNumber(email: string | null | undefined) {
+  if (!email || !email.includes("@")) {
+    return null;
+  }
+
+  return email.split("@")[0] || null;
+}
+
+function normalizeUserRow(row: Record<string, any> | null, authUser?: AuthUser | null) {
+  if (!row && !authUser) {
+    return null;
+  }
+
+  const firstName = row?.first_name ?? row?.firstName ?? null;
+  const lastName = row?.last_name ?? row?.lastName ?? null;
+  const email = row?.email ?? authUser?.email ?? null;
+
+  return {
+    id: row?.id ?? authUser?.userId ?? null,
+    email,
+    firstName,
+    lastName,
+    department: row?.department ?? null,
+    year: row?.year_of_study ?? row?.year ?? null,
+    skills: row?.skills ?? null,
+    bio: row?.bio ?? null,
+    githubUrl: row?.github_url ?? row?.githubUrl ?? null,
+    resumeUrl: row?.resume_url ?? row?.resumeUrl ?? null,
+    creatorName:
+      [firstName, lastName].filter(Boolean).join(" ").trim() ||
+      getRollNumber(email) ||
+      row?.id ||
+      authUser?.userId ||
+      null,
+  };
+}
+
+async function getUserById(userId: string) {
+  const db = getPool();
+  if (!db || !userId) {
+    return null;
+  }
+
+  try {
+    const result = await db.query("SELECT * FROM users WHERE id=$1", [userId]);
+    return result.rows[0] ?? null;
+  } catch (error) {
+    console.error("User by id query failed:", error);
+    return null;
+  }
 }
 
 async function parseJsonBody(req: any) {
@@ -169,6 +221,80 @@ async function ensureUser(authUser: AuthUser) {
   );
 }
 
+async function getCurrentUser(authUser: AuthUser | null) {
+  if (!authUser) {
+    return null;
+  }
+
+  await ensureUser(authUser);
+  const row = await getUserById(authUser.userId);
+  return normalizeUserRow(row, authUser);
+}
+
+async function updateUserProfile(authUser: AuthUser, body: Record<string, any>) {
+  const db = getPool();
+  if (!db) {
+    throw new Error("DATABASE_URL is not set");
+  }
+
+  await ensureUser(authUser);
+
+  const userColumns = await getTableColumns("users");
+  const assignments: string[] = [];
+  const values: any[] = [];
+
+  const add = (column: string, value: any) => {
+    if (!userColumns.has(column) || typeof value === "undefined") {
+      return;
+    }
+
+    values.push(value);
+    assignments.push(`${column}=$${values.length}`);
+  };
+
+  add("first_name", body.firstName ?? null);
+  add("last_name", body.lastName ?? null);
+  add("department", body.department ?? null);
+
+  if (userColumns.has("year_of_study")) {
+    add("year_of_study", body.year ?? null);
+  } else {
+    add("year", body.year ?? null);
+  }
+
+  add("skills", Array.isArray(body.skills) ? body.skills : null);
+  add("bio", body.bio ?? null);
+  add("github_url", body.githubUrl ?? null);
+  add("resume_url", body.resumeUrl ?? null);
+
+  if (assignments.length > 0) {
+    values.push(authUser.userId);
+    await db.query(
+      `UPDATE users
+       SET ${assignments.join(", ")}
+       WHERE id=$${values.length}`,
+      values
+    );
+  }
+
+  return getCurrentUser(authUser);
+}
+
+async function decorateProject(project: Record<string, any> | null) {
+  if (!project) {
+    return null;
+  }
+
+  const creator = project.owner_id ? await getUserById(project.owner_id) : null;
+  const creatorData = normalizeUserRow(creator, null);
+
+  return {
+    ...project,
+    creatorName: creatorData?.creatorName ?? project.owner_id ?? null,
+    creatorEmail: creatorData?.email ?? null,
+  };
+}
+
 async function getProjects() {
   const db = getPool();
   if (!db) {
@@ -177,14 +303,14 @@ async function getProjects() {
 
   try {
     const result = await db.query("SELECT * FROM projects ORDER BY created_at DESC");
-    return result.rows;
+    return Promise.all(result.rows.map((row) => decorateProject(row)));
   } catch (error) {
     console.error("Ordered projects query failed:", error);
   }
 
   try {
     const result = await db.query("SELECT * FROM projects");
-    return result.rows;
+    return Promise.all(result.rows.map((row) => decorateProject(row)));
   } catch (error) {
     console.error("Projects query failed:", error);
     return [];
@@ -202,7 +328,7 @@ async function getProjectsForOwner(ownerId: string) {
       "SELECT * FROM projects WHERE owner_id=$1 ORDER BY created_at DESC",
       [ownerId]
     );
-    return result.rows;
+    return Promise.all(result.rows.map((row) => decorateProject(row)));
   } catch (error) {
     console.error("Owner projects query failed:", error);
     return [];
@@ -217,7 +343,7 @@ async function getProjectById(projectId: number) {
 
   try {
     const result = await db.query("SELECT * FROM projects WHERE id=$1", [projectId]);
-    return result.rows[0] ?? null;
+    return decorateProject(result.rows[0] ?? null);
   } catch (error) {
     console.error("Project by id query failed:", error);
     return null;
@@ -273,7 +399,7 @@ async function createProject(body: any, authUser: AuthUser) {
     values
   );
 
-  return result.rows[0] ?? null;
+  return decorateProject(result.rows[0] ?? null);
 }
 
 async function getApplicationsForProject(projectId: number, authUser: AuthUser | null) {
@@ -459,7 +585,7 @@ async function updateProject(projectId: number, body: any, authUser: AuthUser) {
     values
   );
 
-  return result.rows[0] ?? project;
+  return decorateProject(result.rows[0] ?? project);
 }
 
 async function deleteProject(projectId: number, authUser: AuthUser) {
@@ -538,28 +664,30 @@ export default async function handler(req: any, res: any) {
     const authUser = getAuthUser(req);
 
     if (method === "GET" && path === "/api/me") {
-      return sendJson(
-        res,
-        200,
-        authUser
-          ? {
-              id: authUser.userId,
-              email: authUser.email,
-              firstName: null,
-              lastName: null,
-              department: null,
-              year: null,
-              skills: null,
-              bio: null,
-              githubUrl: null,
-              resumeUrl: null,
-            }
-          : null
-      );
+      const currentUser = await getCurrentUser(authUser);
+      return sendJson(res, 200, currentUser);
     }
 
     if (method === "POST" && path === "/api/logout") {
       return sendJson(res, 200, { message: "Logged out" });
+    }
+
+    if (method === "PUT" && path === "/api/users/profile") {
+      if (!authUser) {
+        return sendJson(res, 401, { message: "Not logged in" });
+      }
+
+      const body = await parseJsonBody(req);
+      const user = await updateUserProfile(authUser, body);
+      return sendJson(res, 200, user);
+    }
+
+    if (method === "GET" && path === "/api/users") {
+      const requestedUserId = url.searchParams.get("id") || "";
+      const user = requestedUserId
+        ? normalizeUserRow(await getUserById(requestedUserId), null)
+        : null;
+      return sendJson(res, user ? 200 : 404, user ?? { message: "User not found" });
     }
 
     if (method === "GET" && path === "/api/projects") {
@@ -736,6 +864,15 @@ export default async function handler(req: any, res: any) {
         authUser
       );
       return sendJson(res, 200, application);
+    }
+
+    const userMatch = path.match(/^\/api\/users\/(.+)$/);
+    if (method === "GET" && userMatch) {
+      const user = normalizeUserRow(
+        await getUserById(decodeURIComponent(userMatch[1])),
+        null
+      );
+      return sendJson(res, user ? 200 : 404, user ?? { message: "User not found" });
     }
 
     return sendJson(res, 404, { message: "Not found" });

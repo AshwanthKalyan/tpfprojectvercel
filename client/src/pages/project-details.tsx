@@ -237,7 +237,7 @@ export default function ProjectDetails() {
           <span>
             Creator:
             <span className="ml-2 font-bold">
-              {project.owner_id}
+              {project.creatorName || project.owner_id}
             </span>
           </span>
 
