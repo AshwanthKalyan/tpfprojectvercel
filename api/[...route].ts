@@ -1,19 +1,28 @@
 import "dotenv/config";
-import { attachErrorHandler, createApp } from "../server/app";
 
-const appPromise = createApp()
-  .then(({ app }) => {
-    attachErrorHandler(app);
-    return app;
-  })
-  .catch((error) => {
-    console.error("Failed to initialize app:", error);
-    throw error;
-  });
+let appPromise: Promise<any> | null = null;
+
+async function getApp() {
+  if (!appPromise) {
+    appPromise = import("../server/app")
+      .then(async ({ attachErrorHandler, createApp }) => {
+        const { app } = await createApp();
+        attachErrorHandler(app);
+        return app;
+      })
+      .catch((error) => {
+        appPromise = null;
+        console.error("Failed to initialize app:", error);
+        throw error;
+      });
+  }
+
+  return appPromise;
+}
 
 export default async function handler(req: any, res: any) {
   try {
-    const app = await appPromise;
+    const app = await getApp();
 
     await new Promise<void>((resolve, reject) => {
       const cleanup = () => {
