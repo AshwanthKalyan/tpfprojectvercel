@@ -1,12 +1,12 @@
 import "dotenv/config";
+import { attachErrorHandler, createApp } from "../server/app";
 
 let appPromise: Promise<any> | null = null;
 
 async function getApp() {
   if (!appPromise) {
-    appPromise = import("../server/app")
-      .then(async ({ attachErrorHandler, createApp }) => {
-        const { app } = await createApp();
+    appPromise = createApp()
+      .then(({ app }) => {
         attachErrorHandler(app);
         return app;
       })
