@@ -109,6 +109,12 @@ async function getRequestIdentityCandidates(user: {
   return Array.from(identities);
 }
 
+function getNumericQueryParam(req: any, key: string) {
+  const value = req.query?.[key];
+  const raw = Array.isArray(value) ? value[0] : value;
+  return Number(raw || 0);
+}
+
 async function getClerkUserSafe(userId: string) {
   try {
     return await clerkClient.users.getUser(userId);
@@ -468,10 +474,20 @@ export async function registerRoutes(app: Express) {
   // =========================
   // GET ALL PROJECTS
   // =========================
-  app.get("/api/projects", async (_req, res) => {
+  app.get("/api/projects", async (req, res) => {
     try {
       if (!hasDatabaseUrl) {
         return res.json([]);
+      }
+
+      const requestedProjectId = getNumericQueryParam(req, "id");
+      if (requestedProjectId) {
+        const result = await pool.query(
+          "SELECT * FROM projects WHERE id=$1",
+          [requestedProjectId]
+        );
+
+        return res.json(result.rows[0] ?? null);
       }
 
       const result = await pool.query(
@@ -569,6 +585,38 @@ export async function registerRoutes(app: Express) {
     }
   });
 
+  app.patch("/api/projects", isAuthenticated, async (req, res) => {
+    try {
+      const projectId = getNumericQueryParam(req, "id");
+      if (!projectId) {
+        return res.status(400).json({ message: "Invalid project id" });
+      }
+
+      const identityCandidates = await getRequestIdentityCandidates(req.user);
+      const { title, description, duration, comms_link } = req.body;
+
+      const result = await pool.query(
+        `UPDATE projects
+         SET title=$1,
+             description=$2,
+             duration=$3,
+             comms_link=$4
+         WHERE id=$5 AND owner_id = ANY($6::text[])
+         RETURNING *`,
+        [title, description, duration, comms_link, projectId, identityCandidates]
+      );
+
+      if (!result.rows[0]) {
+        return res.status(404).json({ message: "Project not found" });
+      }
+
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error("UPDATE PROJECT ERROR:", error);
+      res.status(500).json({ message: "Failed to update project" });
+    }
+  });
+
   // =========================
   // DELETE PROJECT (OWNER ONLY)
   // =========================
@@ -612,6 +660,54 @@ export async function registerRoutes(app: Express) {
 
       await pool.query("COMMIT");
 
+      res.json({ message: "Project deleted" });
+    } catch (error) {
+      try {
+        await pool.query("ROLLBACK");
+      } catch (rollbackError) {
+        console.error("DELETE PROJECT ROLLBACK ERROR:", rollbackError);
+      }
+      console.error("DELETE PROJECT ERROR:", error);
+      res.status(500).json({ message: "Failed to delete project" });
+    }
+  });
+
+  app.delete("/api/projects", isAuthenticated, async (req, res) => {
+    try {
+      const projectId = getNumericQueryParam(req, "id");
+      if (!projectId) {
+        return res.status(400).json({ message: "Invalid project id" });
+      }
+
+      const identityCandidates = await getRequestIdentityCandidates(req.user);
+
+      const ownerCheck = await pool.query(
+        "SELECT owner_id FROM projects WHERE id=$1",
+        [projectId]
+      );
+
+      if (!ownerCheck.rows[0]) {
+        return res.status(404).json({ message: "Project not found" });
+      }
+
+      if (!identityCandidates.includes(ownerCheck.rows[0].owner_id)) {
+        return res.status(403).json({ message: "Not authorized" });
+      }
+
+      await pool.query("BEGIN");
+
+      try {
+        await pool.query("DELETE FROM applications WHERE project_id=$1", [projectId]);
+      } catch (error) {
+        console.warn("DELETE APPLICATIONS WARNING:", error);
+      }
+
+      await pool.query(
+        "DELETE FROM projects WHERE id=$1 AND owner_id = ANY($2::text[]) RETURNING id",
+        [projectId, identityCandidates]
+      );
+
+      await pool.query("COMMIT");
       res.json({ message: "Project deleted" });
     } catch (error) {
       try {
@@ -781,6 +877,165 @@ export async function registerRoutes(app: Express) {
     }
   });
 
+  app.get("/api/project-applications", isAuthenticated, async (req, res) => {
+    try {
+      const projectId = getNumericQueryParam(req, "projectId");
+      if (!projectId) {
+        return res.status(400).json({ message: "Project not found" });
+      }
+
+      const identityCandidates = await getRequestIdentityCandidates(req.user);
+      const ownerRes = await pool.query(
+        "SELECT owner_id FROM projects WHERE id=$1",
+        [projectId]
+      );
+
+      if (!ownerRes.rows[0]) {
+        return res.status(404).json({ message: "Project not found" });
+      }
+
+      const isOwner = identityCandidates.includes(ownerRes.rows[0].owner_id);
+
+      if (isOwner) {
+        const result = await pool.query(
+          `SELECT
+            a.id,
+            a.project_id,
+            a.applicant_id,
+            a.resume_url,
+            a.message,
+            a.status,
+            a.created_at,
+            u.id AS user_id,
+            u.email,
+            u.first_name,
+            u.last_name,
+            u.department,
+            u.year_of_study,
+            u.skills,
+            u.bio,
+            u.github_url,
+            u.resume_url AS user_resume_url
+           FROM applications a
+           LEFT JOIN users u ON a.applicant_id = u.id
+           WHERE a.project_id = $1
+           ORDER BY a.created_at DESC`,
+          [projectId]
+        );
+
+        return res.json(
+          result.rows.map((row) => ({
+            id: row.id,
+            projectId: row.project_id,
+            applicantId: row.applicant_id,
+            resumeUrl: row.resume_url,
+            message: row.message,
+            status: row.status,
+            createdAt: row.created_at,
+            applicant: {
+              id: row.user_id ?? row.applicant_id,
+              email: row.email ?? null,
+              firstName: row.first_name ?? null,
+              lastName: row.last_name ?? null,
+              department: row.department ?? null,
+              year: row.year_of_study ?? null,
+              skills: row.skills ?? null,
+              bio: row.bio ?? null,
+              githubUrl: row.github_url ?? null,
+              resumeUrl: row.user_resume_url ?? null,
+            },
+          }))
+        );
+      }
+
+      const result = await pool.query(
+        `SELECT
+          id,
+          project_id,
+          applicant_id,
+          resume_url,
+          message,
+          status,
+          created_at
+         FROM applications
+         WHERE project_id=$1 AND applicant_id = ANY($2::text[])
+         ORDER BY created_at DESC`,
+        [projectId, identityCandidates]
+      );
+
+      return res.json(
+        result.rows.map((row) => ({
+          id: row.id,
+          projectId: row.project_id,
+          applicantId: row.applicant_id,
+          resumeUrl: row.resume_url,
+          message: row.message,
+          status: row.status,
+          createdAt: row.created_at,
+        }))
+      );
+    } catch (error) {
+      console.error("FETCH PROJECT APPLICATIONS ERROR:", error);
+      res.status(500).json({ message: "Failed to fetch applications" });
+    }
+  });
+
+  app.post("/api/project-applications", isAuthenticated, async (req, res) => {
+    try {
+      const projectId = getNumericQueryParam(req, "projectId");
+      if (!projectId) {
+        return res.status(400).json({ message: "Project not found" });
+      }
+
+      const identityCandidates = await getRequestIdentityCandidates(req.user);
+      const { resumeUrl, message } = req.body;
+
+      const projectRes = await pool.query(
+        "SELECT owner_id FROM projects WHERE id=$1",
+        [projectId]
+      );
+
+      if (!projectRes.rows[0]) {
+        return res.status(404).json({ message: "Project not found" });
+      }
+
+      if (identityCandidates.includes(projectRes.rows[0].owner_id)) {
+        return res.status(400).json({ message: "Cannot apply to your own project" });
+      }
+
+      const existing = await pool.query(
+        "SELECT id FROM applications WHERE project_id=$1 AND applicant_id = ANY($2::text[])",
+        [projectId, identityCandidates]
+      );
+
+      if (existing.rows[0]) {
+        return res.status(409).json({ message: "Already applied" });
+      }
+
+      const result = await pool.query(
+        `INSERT INTO applications
+          (project_id, applicant_id, resume_url, message, status)
+         VALUES ($1, $2, $3, $4, 'pending')
+         RETURNING *`,
+        [projectId, req.user.id, resumeUrl || null, message || null]
+      );
+
+      const row = result.rows[0];
+      res.status(201).json({
+        id: row.id,
+        projectId: row.project_id,
+        applicantId: row.applicant_id,
+        resumeUrl: row.resume_url,
+        message: row.message,
+        status: row.status,
+        createdAt: row.created_at,
+      });
+    } catch (error) {
+      console.error("CREATE APPLICATION ERROR:", error);
+      res.status(500).json({ message: "Failed to apply" });
+    }
+  });
+
   // =========================
   // LIST MY SUBMISSIONS
   // =========================
@@ -826,6 +1081,53 @@ export async function registerRoutes(app: Express) {
       const id = Number(req.params.id);
       const identityCandidates = await getRequestIdentityCandidates(req.user);
       const { status } = req.body;
+
+      if (!["pending", "accepted", "rejected"].includes(status)) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+
+      const result = await pool.query(
+        `UPDATE applications a
+         SET status = $1
+         WHERE a.id = $2
+           AND EXISTS (
+             SELECT 1 FROM projects p
+             WHERE p.id = a.project_id
+               AND p.owner_id = ANY($3::text[])
+           )
+         RETURNING *`,
+        [status, id, identityCandidates]
+      );
+
+      if (!result.rows[0]) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      const row = result.rows[0];
+      res.json({
+        id: row.id,
+        projectId: row.project_id,
+        applicantId: row.applicant_id,
+        resumeUrl: row.resume_url,
+        message: row.message,
+        status: row.status,
+        createdAt: row.created_at,
+      });
+    } catch (error) {
+      console.error("UPDATE APPLICATION STATUS ERROR:", error);
+      res.status(500).json({ message: "Failed to update status" });
+    }
+  });
+
+  app.patch("/api/application-status", isAuthenticated, async (req, res) => {
+    try {
+      const id = getNumericQueryParam(req, "id");
+      const identityCandidates = await getRequestIdentityCandidates(req.user);
+      const { status } = req.body;
+
+      if (!id) {
+        return res.status(400).json({ message: "Application not found" });
+      }
 
       if (!["pending", "accepted", "rejected"].includes(status)) {
         return res.status(400).json({ message: "Invalid status" });
