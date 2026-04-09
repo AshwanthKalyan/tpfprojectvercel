@@ -47,10 +47,18 @@ export function useUpdateProfile() {
       return response.json();
     },
 
-    onSuccess: () => {
+    onSuccess: (updatedUser) => {
+      queryClient.setQueryData(["/api/me"], updatedUser);
+
+      if (updatedUser?.id) {
+        queryClient.setQueryData(["/api/users", updatedUser.id], updatedUser);
+      }
 
       queryClient.invalidateQueries({
         queryKey: ["/api/me"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/users"],
       });
       queryClient.invalidateQueries({
         queryKey: ["/api/projects"],

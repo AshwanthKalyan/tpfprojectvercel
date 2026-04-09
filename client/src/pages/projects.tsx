@@ -1,15 +1,38 @@
 import { useProjects, useCreateProject } from "@/hooks/use-projects";
+import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
 import { Plus, Search, Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
 
+function hasRequiredProfile(user: any) {
+  return !!(
+    user?.firstName?.trim() &&
+    user?.lastName?.trim() &&
+    user?.department?.trim() &&
+    user?.year
+  );
+}
+
 export default function Projects() {
   const { data: projects, isLoading, isError, error } = useProjects();
+  const { user } = useAuth();
   const createProject = useCreateProject();
   const [, setLocation] = useLocation();
 
   const [showCreate, setShowCreate] = useState(false);
+  const [showProfilePrompt, setShowProfilePrompt] = useState(false);
   const [search, setSearch] = useState("");
+
+  const openCreateFlow = () => {
+    if (!hasRequiredProfile(user)) {
+      setShowProfilePrompt(true);
+      setShowCreate(false);
+      return;
+    }
+
+    setShowProfilePrompt(false);
+    setShowCreate(true);
+  };
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -18,10 +41,10 @@ export default function Projects() {
 
     const params = new URLSearchParams(window.location.search);
     if (params.get("create") === "1") {
-      setShowCreate(true);
+      openCreateFlow();
       setLocation("/projects", { replace: true });
     }
-  }, [setLocation]);
+  }, [setLocation, user]);
 
   if (isLoading) {
     return (
@@ -86,7 +109,7 @@ export default function Projects() {
         </div>
 
         <button
-          onClick={() => setShowCreate(true)}
+          onClick={openCreateFlow}
           className="bg-primary text-background px-6 py-3 font-bold font-display uppercase tracking-wider brutal-shadow hover:bg-white hover:text-black transition-all flex items-center gap-2"
         >
           <Plus className="h-5 w-5" /> Initialize Project
@@ -106,6 +129,40 @@ export default function Projects() {
       </div>
 
       {/* CREATE PROJECT MODAL */}
+      {showProfilePrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg border-2 border-primary bg-card p-6 brutal-shadow">
+            <h2 className="mb-4 text-2xl font-display uppercase text-primary">
+              Complete Your Profile First
+            </h2>
+            <p className="mb-6 font-mono text-sm text-muted-foreground">
+              Add your first name, last name, department, and year before creating a project.
+              This helps other users see who created the project.
+            </p>
+
+            <div className="flex justify-end gap-4">
+              <button
+                type="button"
+                onClick={() => setShowProfilePrompt(false)}
+                className="px-6 py-2 border border-primary/50"
+              >
+                Later
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowProfilePrompt(false);
+                  setLocation("/profile");
+                }}
+                className="px-6 py-2 bg-primary text-background"
+              >
+                Go To Profile
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showCreate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
           <div className="bg-card border-2 border-primary p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto brutal-shadow">
@@ -155,6 +212,9 @@ export default function Projects() {
                   <span className="text-xs font-mono text-primary/70 uppercase">
                     {project.project_type || "Project"}
                   </span>
+                </div>
+                <div className="text-xs font-mono uppercase tracking-wider text-primary/70">
+                  By {project.creatorName || project.creatorEmail?.split("@")[0] || project.owner_id}
                 </div>
                 <p className="text-sm text-muted-foreground line-clamp-4">
                   {project.description}

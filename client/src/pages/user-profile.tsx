@@ -29,7 +29,12 @@ export default function UserProfile() {
     );
   }
 
-  const fullName = [user.firstName, user.lastName].filter(Boolean).join(" ");
+  const fullName =
+    user.firstName && user.lastName
+      ? `${user.firstName} ${user.lastName}`.trim()
+      : "";
+  const displayName =
+    fullName || user.creatorName || user.email?.split("@")[0] || "Project Creator";
 
   return (
     <div className="space-y-8 max-w-4xl mx-auto">
@@ -44,7 +49,7 @@ export default function UserProfile() {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold">
-              {fullName || "Project Creator"}
+              {displayName}
             </h1>
             <p className="text-sm text-muted-foreground">
               {user.email || "Email hidden"}

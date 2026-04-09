@@ -1,5 +1,6 @@
 import { useAuth } from "@/hooks/use-auth";
 import { useUpdateProfile } from "@/hooks/use-users";
+import { toast } from "@/hooks/use-toast";
 import { Terminal, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -53,9 +54,18 @@ function normalizeSkillsForInput(skills: unknown): string {
   return "";
 }
 
+function getDisplayIdentity(firstName: string, lastName: string, rollNumber: string, fallback: string) {
+  const fullName = firstName.trim() && lastName.trim()
+    ? `${firstName.trim()} ${lastName.trim()}`
+    : "";
+
+  return fullName || rollNumber || fallback;
+}
+
 export default function Profile() {
   const { user, isLoading } = useAuth();
   const updateProfile = useUpdateProfile();
+  const rollNumber = user?.email?.split("@")[0] || "";
   
   const [formData, setFormData] = useState({
     firstName: "",
@@ -85,6 +95,14 @@ export default function Profile() {
     }
   }, [user]);
 
+  const creatorIdentity =
+    getDisplayIdentity(
+      formData.firstName,
+      formData.lastName,
+      rollNumber,
+      user?.creatorName || user?.id || "Not available"
+    );
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -95,16 +113,33 @@ export default function Profile() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    updateProfile.mutate({
-      firstName: formData.firstName,
-      lastName: formData.lastName,
-      department: formData.department,
-      year: formData.year ? Number(formData.year) : null,
-      skills: parseSkillsString(formData.skills),
-      bio: formData.bio,
-      resumeUrl: formData.resumeUrl,
-      githubUrl: formData.githubUrl,
-    });
+    updateProfile.mutate(
+      {
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        department: formData.department,
+        year: formData.year ? Number(formData.year) : null,
+        skills: parseSkillsString(formData.skills),
+        bio: formData.bio,
+        resumeUrl: formData.resumeUrl,
+        githubUrl: formData.githubUrl,
+      },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Identity updated",
+            description: "Your profile and creator label were refreshed.",
+          });
+        },
+        onError: (error) => {
+          toast({
+            title: "Update failed",
+            description:
+              error instanceof Error ? error.message : "Unable to update profile.",
+          });
+        },
+      }
+    );
   };
 
   return (
@@ -115,6 +150,17 @@ export default function Profile() {
       </div>
 
       <div className="border-2 border-primary/30 bg-card p-6 md:p-8">
+        <div className="mb-6 grid grid-cols-1 gap-4 border-b border-primary/20 pb-6 font-mono md:grid-cols-2">
+          <div className="space-y-1">
+            <div className="text-xs uppercase tracking-widest text-primary">Roll Number</div>
+            <div className="text-sm text-foreground">{rollNumber || "Unavailable"}</div>
+          </div>
+          <div className="space-y-1">
+            <div className="text-xs uppercase tracking-widest text-primary">Projects Show You As</div>
+            <div className="text-sm text-foreground">{creatorIdentity}</div>
+          </div>
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-6 font-mono">
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

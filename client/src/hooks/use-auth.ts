@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAuth as useClerkAuth } from "@clerk/react";
+import { useAuth as useClerkAuth, useUser } from "@clerk/react";
 import { useEffect } from "react";
 import type { User } from "@shared/models/auth";
 import { useAuthedFetch } from "@/lib/authed-fetch";
@@ -7,6 +7,7 @@ import { useAuthedFetch } from "@/lib/authed-fetch";
 export function useAuth() {
 
   const { isLoaded, isSignedIn } = useClerkAuth();
+  const { isLoaded: isUserLoaded } = useUser();
   const authedFetch = useAuthedFetch();
 
   const queryClient = useQueryClient();
@@ -40,7 +41,7 @@ export function useAuth() {
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
-    enabled: isLoaded && isSignedIn,
+    enabled: isLoaded && isSignedIn && isUserLoaded,
   });
 
   const logoutMutation = useMutation({
@@ -56,7 +57,7 @@ export function useAuth() {
 
   return {
     user,
-    isLoading: !isLoaded || isLoading,
+    isLoading: !isLoaded || !isUserLoaded || isLoading,
     isAuthenticated: !!isSignedIn,
     isClerkLoaded: isLoaded,
     isClerkSignedIn: !!isSignedIn,

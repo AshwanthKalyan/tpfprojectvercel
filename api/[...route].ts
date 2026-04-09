@@ -33,13 +33,21 @@ function sendJson(res: any, status: number, body: unknown) {
 
 function getRequestPath(req: any) {
   const routeParam = req.query?.route;
+  const normalizeRouteValue = (value: string) =>
+    decodeURIComponent(String(value))
+      .split("/")
+      .map((segment) => segment.trim())
+      .filter(Boolean);
 
   if (Array.isArray(routeParam) && routeParam.length > 0) {
-    return `/api/${routeParam.map((segment) => encodeURIComponent(String(segment))).join("/")}`;
+    const segments = routeParam.flatMap((segment) =>
+      normalizeRouteValue(String(segment))
+    );
+    return `/api/${segments.join("/")}`;
   }
 
   if (typeof routeParam === "string" && routeParam.length > 0) {
-    return `/api/${routeParam}`;
+    return `/api/${normalizeRouteValue(routeParam).join("/")}`;
   }
 
   const host = req.headers?.host || "localhost";
@@ -61,6 +69,18 @@ function decodeJwtPayload(token: string) {
   }
 }
 
+function getHeaderValue(req: any, name: string) {
+  const directValue = req.headers?.[name];
+  const lowerCaseValue = req.headers?.[name.toLowerCase()];
+  const rawValue = directValue ?? lowerCaseValue;
+
+  if (Array.isArray(rawValue)) {
+    return typeof rawValue[0] === "string" ? rawValue[0] : null;
+  }
+
+  return typeof rawValue === "string" && rawValue.length > 0 ? rawValue : null;
+}
+
 function getAuthUser(req: any): AuthUser | null {
   const authHeader = req.headers?.authorization || req.headers?.Authorization;
   if (typeof authHeader !== "string" || !authHeader.startsWith("Bearer ")) {
@@ -75,10 +95,12 @@ function getAuthUser(req: any): AuthUser | null {
   }
 
   const email =
+    (typeof payload.primaryEmail === "string" && payload.primaryEmail) ||
     (typeof payload.email === "string" && payload.email) ||
     (typeof payload.email_address === "string" && payload.email_address) ||
     (typeof payload.primary_email_address === "string" &&
       payload.primary_email_address) ||
+    getHeaderValue(req, "x-user-email") ||
     null;
 
   return { userId, email };
@@ -90,6 +112,20 @@ function getRollNumber(email: string | null | undefined) {
   }
 
   return email.split("@")[0] || null;
+}
+
+function getCreatorDisplayName(params: {
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  fallbackId: string | null;
+}) {
+  const fullName =
+    params.firstName && params.lastName
+      ? `${params.firstName} ${params.lastName}`.trim()
+      : null;
+
+  return fullName || getRollNumber(params.email) || params.firstName || params.lastName || params.fallbackId;
 }
 
 function normalizeUserRow(row: Record<string, any> | null, authUser?: AuthUser | null) {
@@ -112,12 +148,12 @@ function normalizeUserRow(row: Record<string, any> | null, authUser?: AuthUser |
     bio: row?.bio ?? null,
     githubUrl: row?.github_url ?? row?.githubUrl ?? null,
     resumeUrl: row?.resume_url ?? row?.resumeUrl ?? null,
-    creatorName:
-      [firstName, lastName].filter(Boolean).join(" ").trim() ||
-      getRollNumber(email) ||
-      row?.id ||
-      authUser?.userId ||
-      null,
+    creatorName: getCreatorDisplayName({
+      firstName,
+      lastName,
+      email,
+      fallbackId: row?.id ?? authUser?.userId ?? null,
+    }),
   };
 }
 
@@ -192,33 +228,75 @@ async function getTableColumns(tableName: string) {
 async function ensureUser(authUser: AuthUser) {
   const db = getPool();
   if (!db) {
-    return;
+    return null;
   }
 
   const userColumns = await getTableColumns("users");
   if (!userColumns.has("id")) {
-    return;
+    return null;
+  }
+
+  const existingUser = await getUserById(authUser.userId);
+  if (existingUser) {
+    const assignments: string[] = [];
+    const values: Array<string | null> = [];
+
+    const add = (column: string, value: string | null, currentValue: unknown) => {
+      if (
+        !userColumns.has(column) ||
+        !value ||
+        (typeof currentValue === "string" && currentValue.length > 0)
+      ) {
+        return;
+      }
+
+      values.push(value);
+      assignments.push(`${column}=$${values.length}`);
+    };
+
+    add("email", authUser.email, existingUser.email);
+
+    if (assignments.length > 0) {
+      values.push(authUser.userId);
+      await db.query(
+        `UPDATE users
+         SET ${assignments.join(", ")}
+         WHERE id=$${values.length}`,
+        values
+      );
+    }
+
+    return (await getUserById(authUser.userId)) ?? existingUser;
+  }
+
+  if (!authUser.email) {
+    return null;
   }
 
   const columns = ["id"];
   const values: Array<string | null> = [authUser.userId];
 
-  if (userColumns.has("email")) {
-    columns.push("email");
-    values.push(authUser.email);
-  }
+  const addInsertColumn = (column: string, value: string | null) => {
+    if (!userColumns.has(column)) {
+      return;
+    }
+
+    columns.push(column);
+    values.push(value);
+  };
+
+  addInsertColumn("email", authUser.email);
 
   const placeholders = values.map((_, index) => `$${index + 1}`).join(", ");
-  const updateClause = userColumns.has("email")
-    ? "ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email"
-    : "ON CONFLICT (id) DO NOTHING";
 
   await db.query(
     `INSERT INTO users (${columns.join(", ")})
      VALUES (${placeholders})
-     ${updateClause}`,
+     ON CONFLICT (id) DO NOTHING`,
     values
   );
+
+  return await getUserById(authUser.userId);
 }
 
 async function getCurrentUser(authUser: AuthUser | null) {
@@ -226,9 +304,8 @@ async function getCurrentUser(authUser: AuthUser | null) {
     return null;
   }
 
-  await ensureUser(authUser);
-  const row = await getUserById(authUser.userId);
-  return normalizeUserRow(row, authUser);
+  const user = await ensureUser(authUser);
+  return normalizeUserRow(user, authUser);
 }
 
 async function updateUserProfile(authUser: AuthUser, body: Record<string, any>) {
@@ -237,7 +314,10 @@ async function updateUserProfile(authUser: AuthUser, body: Record<string, any>) 
     throw new Error("DATABASE_URL is not set");
   }
 
-  await ensureUser(authUser);
+  const user = await ensureUser(authUser);
+  if (!user) {
+    throw new Error("Email is unavailable for this session");
+  }
 
   const userColumns = await getTableColumns("users");
   const assignments: string[] = [];
@@ -268,7 +348,7 @@ async function updateUserProfile(authUser: AuthUser, body: Record<string, any>) 
   add("resume_url", body.resumeUrl ?? null);
 
   if (assignments.length > 0) {
-    values.push(authUser.userId);
+    values.push(user.id);
     await db.query(
       `UPDATE users
        SET ${assignments.join(", ")}
@@ -277,7 +357,12 @@ async function updateUserProfile(authUser: AuthUser, body: Record<string, any>) 
     );
   }
 
-  return getCurrentUser(authUser);
+  const updatedUser = await getUserById(user.id);
+  return normalizeUserRow(updatedUser, {
+    ...authUser,
+    userId: user.id,
+    email: updatedUser?.email ?? authUser.email,
+  });
 }
 
 async function decorateProject(project: Record<string, any> | null) {
@@ -356,7 +441,7 @@ async function createProject(body: any, authUser: AuthUser) {
     throw new Error("DATABASE_URL is not set");
   }
 
-  await ensureUser(authUser);
+  const user = await ensureUser(authUser);
 
   const projectColumns = await getTableColumns("projects");
   const values: any[] = [];
@@ -373,7 +458,7 @@ async function createProject(body: any, authUser: AuthUser) {
 
   add("title", body.title ?? "Untitled Project");
   add("description", body.description ?? null);
-  add("owner_id", authUser.userId);
+  add("owner_id", user?.id ?? authUser.userId);
   add("tech_stack", Array.isArray(body.tech_stack) ? body.tech_stack : null);
   add(
     "skills_required",
@@ -884,6 +969,8 @@ export default async function handler(req: any, res: any) {
         ? 401
         : message === "Not authorized"
           ? 403
+          : message === "Email is unavailable for this session"
+            ? 409
           : message === "Project not found" || message === "Application not found"
             ? 404
             : message === "Already applied" || message === "Cannot apply to your own project"

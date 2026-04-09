@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, buildUrl } from "@shared/routes";
+import { api } from "@shared/routes";
 import type { InsertApplication } from "@shared/schema";
 import { useAuthedFetch } from "@/lib/authed-fetch";
 
