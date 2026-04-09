@@ -123,6 +123,18 @@ function isSyntheticNittIdentity(value: string | null | undefined) {
   return normalized.startsWith("user_");
 }
 
+function hasMeaningfulValue(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+
+  return value !== null && typeof value !== "undefined";
+}
+
 function getCreatorDisplayName(params: {
   firstName: string | null;
   lastName: string | null;
@@ -260,6 +272,113 @@ async function getTableColumns(tableName: string) {
   return columnsPromise;
 }
 
+async function reassignUserReferences(sourceUserId: string, targetUserId: string) {
+  const db = getPool();
+  if (!db || !sourceUserId || !targetUserId || sourceUserId === targetUserId) {
+    return;
+  }
+
+  const projectColumns = await getTableColumns("projects");
+  if (projectColumns.has("owner_id")) {
+    await db.query(
+      `UPDATE projects
+       SET owner_id=$1
+       WHERE owner_id=$2`,
+      [targetUserId, sourceUserId]
+    );
+  }
+
+  const applicationColumns = await getTableColumns("applications");
+  if (applicationColumns.has("applicant_id")) {
+    await db.query(
+      `UPDATE applications
+       SET applicant_id=$1
+       WHERE applicant_id=$2`,
+      [targetUserId, sourceUserId]
+    );
+  }
+}
+
+async function mergeUserRecords(params: {
+  targetUser: Record<string, any>;
+  sourceUser: Record<string, any>;
+  authEmail: string | null;
+}) {
+  const db = getPool();
+  if (!db) {
+    return params.targetUser;
+  }
+
+  const { targetUser, sourceUser, authEmail } = params;
+  if (!targetUser?.id || !sourceUser?.id || targetUser.id === sourceUser.id) {
+    return targetUser;
+  }
+
+  const userColumns = await getTableColumns("users");
+  const assignments: string[] = [];
+  const values: any[] = [];
+
+  const maybeCopy = (column: string) => {
+    if (!userColumns.has(column)) {
+      return;
+    }
+
+    const targetValue = targetUser[column];
+    const sourceValue = sourceUser[column];
+    if (hasMeaningfulValue(targetValue) || !hasMeaningfulValue(sourceValue)) {
+      return;
+    }
+
+    values.push(sourceValue);
+    assignments.push(`${column}=$${values.length}`);
+  };
+
+  const targetEmail =
+    typeof targetUser.email === "string" ? targetUser.email : null;
+  const sourceEmail =
+    typeof sourceUser.email === "string" ? sourceUser.email : null;
+  const preferredEmail =
+    authEmail ||
+    (!isSyntheticNittIdentity(targetEmail) ? targetEmail : null) ||
+    (!isSyntheticNittIdentity(sourceEmail) ? sourceEmail : null);
+
+  if (
+    userColumns.has("email") &&
+    preferredEmail &&
+    (!targetEmail || isSyntheticNittIdentity(targetEmail)) &&
+    preferredEmail !== targetEmail
+  ) {
+    values.push(preferredEmail);
+    assignments.push(`email=$${values.length}`);
+  }
+
+  maybeCopy("first_name");
+  maybeCopy("last_name");
+  maybeCopy("profile_image_url");
+  maybeCopy("department");
+  maybeCopy("year_of_study");
+  maybeCopy("year");
+  maybeCopy("skills");
+  maybeCopy("bio");
+  maybeCopy("github_url");
+  maybeCopy("resume_url");
+
+  if (assignments.length > 0) {
+    values.push(targetUser.id);
+    await db.query(
+      `UPDATE users
+       SET ${assignments.join(", ")}
+       WHERE id=$${values.length}`,
+      values
+    );
+  }
+
+  await reassignUserReferences(sourceUser.id, targetUser.id);
+  await db.query("DELETE FROM users WHERE id=$1", [sourceUser.id]);
+
+  return (await getUserById(targetUser.id)) ?? targetUser;
+}
+
 async function ensureUser(authUser: AuthUser) {
   const db = getPool();
   if (!db) {
@@ -272,22 +391,23 @@ async function ensureUser(authUser: AuthUser) {
   }
 
   const existingUser = await getUserById(authUser.userId);
+  const existingUserByEmail = await getUserByEmail(authUser.email);
+
+  if (
+    existingUser &&
+    existingUserByEmail &&
+    existingUser.id !== existingUserByEmail.id
+  ) {
+    return await mergeUserRecords({
+      targetUser: existingUserByEmail,
+      sourceUser: existingUser,
+      authEmail: authUser.email,
+    });
+  }
+
   if (existingUser) {
     const assignments: string[] = [];
     const values: Array<string | null> = [];
-
-    const add = (column: string, value: string | null, currentValue: unknown) => {
-      if (
-        !userColumns.has(column) ||
-        !value ||
-        (typeof currentValue === "string" && currentValue.length > 0)
-      ) {
-        return;
-      }
-
-      values.push(value);
-      assignments.push(`${column}=$${values.length}`);
-    };
 
     const currentEmail =
       typeof existingUser.email === "string" ? existingUser.email : null;
@@ -313,7 +433,6 @@ async function ensureUser(authUser: AuthUser) {
     return (await getUserById(authUser.userId)) ?? existingUser;
   }
 
-  const existingUserByEmail = await getUserByEmail(authUser.email);
   if (existingUserByEmail) {
     return existingUserByEmail;
   }
