@@ -869,20 +869,53 @@ async function createApplication(projectId: number, body: any, authUser: AuthUse
     throw new Error("Cannot apply to your own project");
   }
 
+  const applicationColumns = await getTableColumns("applications");
+  let existingApplicationId: number | null = null;
+
   try {
     const existing = await db.query(
       "SELECT id FROM applications WHERE project_id=$1 AND applicant_id=$2",
       [projectId, effectiveUserId]
     );
 
-    if (existing.rows[0]) {
-      throw new Error("Already applied");
-    }
-  } catch (error: any) {
-    if (error instanceof Error && error.message === "Already applied") {
-      throw error;
-    }
+    existingApplicationId = existing.rows[0]?.id ?? null;
+  } catch (error) {
     console.error("Existing application lookup failed:", error);
+  }
+
+  if (existingApplicationId) {
+    const assignments = [
+      "resume_url=$2",
+      "message=$3",
+      "status='pending'",
+    ];
+
+    if (applicationColumns.has("updated_at")) {
+      assignments.push("updated_at=NOW()");
+    }
+
+    if (applicationColumns.has("created_at")) {
+      assignments.push("created_at=NOW()");
+    }
+
+    const updated = await db.query(
+      `UPDATE applications
+       SET ${assignments.join(", ")}
+       WHERE id=$1
+       RETURNING *`,
+      [existingApplicationId, body.resumeUrl ?? null, body.message ?? null]
+    );
+
+    const row = updated.rows[0];
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      applicantId: row.applicant_id,
+      resumeUrl: row.resume_url,
+      message: row.message,
+      status: row.status,
+      createdAt: row.created_at,
+    };
   }
 
   const result = await db.query(

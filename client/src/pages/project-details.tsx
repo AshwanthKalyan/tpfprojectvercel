@@ -193,10 +193,8 @@ export default function ProjectDetails() {
   }
 
   const isCreator = user?.id === project.owner_id;
-
-  const hasApplied = applications?.some(
-    (a: any) => a.applicantId === user?.id
-  );
+  const existingApplication = !isCreator ? applications?.[0] ?? null : null;
+  const hasApplied = !isCreator && !!existingApplication;
 
   return (
     <div className="space-y-8 max-w-4xl mx-auto">
@@ -348,9 +346,9 @@ export default function ProjectDetails() {
 
         </div>
 
-        {/* APPLY BUTTON */}
+      {/* APPLY BUTTON */}
 
-        {!isCreator && !hasApplied && !showApply && (
+        {!isCreator && !showApply && (
           <div className="mt-8 flex justify-end gap-3">
             <button
               onClick={() => setLocation("/projects")}
@@ -363,15 +361,23 @@ export default function ProjectDetails() {
               className="bg-primary text-black px-6 py-2 flex items-center gap-2"
             >
               <Send className="h-4 w-4" />
-              Apply
+              {hasApplied ? "Reapply" : "Apply"}
             </button>
           </div>
         )}
 
-        {hasApplied && !isCreator && (
+        {hasApplied && !isCreator && !showApply && (
           <div className="mt-8 text-right">
-            <div className="border px-4 py-2 inline-block">
-              APPLICATION SENT
+            <div className="inline-flex items-center gap-3">
+              <div className="border px-4 py-2 inline-block">
+                APPLICATION SENT
+              </div>
+              <button
+                onClick={() => setShowApply(true)}
+                className="border border-primary px-4 py-2"
+              >
+                Reapply
+              </button>
             </div>
           </div>
         )}
@@ -439,13 +445,14 @@ export default function ProjectDetails() {
       {showApply && (
         <div className="border p-6">
 
-          <h2 className="text-xl mb-4">Apply</h2>
+          <h2 className="text-xl mb-4">{hasApplied ? "Reapply" : "Apply"}</h2>
 
           <form onSubmit={handleApply} className="space-y-4">
 
             <input
               name="resumeUrl"
               placeholder="Resume URL"
+              defaultValue={existingApplication?.resumeUrl || ""}
               className="w-full border p-2"
             />
 
@@ -453,6 +460,7 @@ export default function ProjectDetails() {
               name="message"
               required
               placeholder="Why should we pick you?"
+              defaultValue={existingApplication?.message || ""}
               className="w-full border p-2"
             />
 
@@ -466,7 +474,7 @@ export default function ProjectDetails() {
                 type="submit"
                 className="bg-primary text-black px-6 py-2"
               >
-                Send
+                {hasApplied ? "Send Reapplication" : "Send"}
               </button>
 
             </div>

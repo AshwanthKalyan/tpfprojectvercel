@@ -1,10 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@clerk/react";
 import { api } from "@shared/routes";
 import type { InsertApplication } from "@shared/schema";
 import { useAuthedFetch } from "@/lib/authed-fetch";
 
 export function useProjectApplications(projectId: number) {
   const authedFetch = useAuthedFetch();
+  const { isLoaded, isSignedIn } = useAuth();
   return useQuery({
     queryKey: [api.applications.listForProject.path, projectId],
     queryFn: async () => {
@@ -13,7 +15,7 @@ export function useProjectApplications(projectId: number) {
       if (!res.ok) throw new Error("Failed to fetch applications");
       return await res.json();
     },
-    enabled: !!projectId,
+    enabled: isLoaded && !!isSignedIn && !!projectId,
     retry: false,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
@@ -22,6 +24,7 @@ export function useProjectApplications(projectId: number) {
 
 export function useMyApplications() {
   const authedFetch = useAuthedFetch();
+  const { isLoaded, isSignedIn } = useAuth();
   return useQuery({
     queryKey: [api.applications.listForUser.path],
     queryFn: async () => {
@@ -29,11 +32,15 @@ export function useMyApplications() {
       if (!res.ok) throw new Error("Failed to fetch your applications");
       return api.applications.listForUser.responses[200].parse(await res.json());
     },
+    enabled: isLoaded && !!isSignedIn,
+    retry: false,
+    refetchOnWindowFocus: false,
   });
 }
 
 export function useMyProjectApplications() {
   const authedFetch = useAuthedFetch();
+  const { isLoaded, isSignedIn } = useAuth();
   return useQuery({
     queryKey: ["/api/my-project-applications"],
     queryFn: async () => {
@@ -41,6 +48,9 @@ export function useMyProjectApplications() {
       if (!res.ok) throw new Error("Failed to fetch applications to your projects");
       return await res.json();
     },
+    enabled: isLoaded && !!isSignedIn,
+    retry: false,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -64,6 +74,7 @@ export function useCreateApplication(projectId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.applications.listForProject.path, projectId] });
       queryClient.invalidateQueries({ queryKey: [api.applications.listForUser.path] });
+      queryClient.invalidateQueries({ queryKey: ["/api/my-project-applications"] });
     },
   });
 }
