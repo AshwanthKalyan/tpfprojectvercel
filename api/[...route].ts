@@ -744,6 +744,114 @@ async function getApplicationsForProject(projectId: number, authUser: AuthUser |
   }
 }
 
+async function getApplicationsForUser(authUser: AuthUser | null) {
+  const db = getPool();
+  if (!db || !authUser) {
+    return [];
+  }
+
+  const effectiveUserId = await getEffectiveUserId(authUser);
+
+  try {
+    const result = await db.query(
+      `SELECT
+        a.id,
+        a.project_id,
+        a.applicant_id,
+        a.resume_url,
+        a.message,
+        a.status,
+        a.created_at,
+        p.title AS project_title
+       FROM applications a
+       LEFT JOIN projects p ON a.project_id = p.id
+       WHERE a.applicant_id = $1
+       ORDER BY a.created_at DESC`,
+      [effectiveUserId]
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      projectId: row.project_id,
+      applicantId: row.applicant_id,
+      resumeUrl: row.resume_url,
+      message: row.message,
+      status: row.status,
+      createdAt: row.created_at,
+      projectTitle: row.project_title ?? null,
+    }));
+  } catch (error) {
+    console.error("User applications query failed:", error);
+    return [];
+  }
+}
+
+async function getApplicationsToMyProjects(authUser: AuthUser | null) {
+  const db = getPool();
+  if (!db || !authUser) {
+    return [];
+  }
+
+  const effectiveUserId = await getEffectiveUserId(authUser);
+
+  try {
+    const result = await db.query(
+      `SELECT
+        a.id,
+        a.project_id,
+        a.applicant_id,
+        a.resume_url,
+        a.message,
+        a.status,
+        a.created_at,
+        p.title AS project_title,
+        u.id AS user_id,
+        u.email,
+        u.first_name,
+        u.last_name,
+        u.department,
+        u.year_of_study,
+        u.year,
+        u.skills,
+        u.bio,
+        u.github_url,
+        u.resume_url AS user_resume_url
+       FROM applications a
+       JOIN projects p ON a.project_id = p.id
+       LEFT JOIN users u ON a.applicant_id = u.id
+       WHERE p.owner_id = $1
+       ORDER BY a.created_at DESC`,
+      [effectiveUserId]
+    );
+
+    return result.rows.map((row) => ({
+      applicationId: row.id,
+      projectId: row.project_id,
+      applicantId: row.applicant_id,
+      resumeUrl: row.resume_url,
+      message: row.message,
+      status: row.status,
+      createdAt: row.created_at,
+      projectTitle: row.project_title ?? null,
+      applicant: {
+        id: row.user_id ?? row.applicant_id ?? null,
+        email: row.email ?? null,
+        firstName: row.first_name ?? null,
+        lastName: row.last_name ?? null,
+        department: row.department ?? null,
+        year: row.year_of_study ?? row.year ?? null,
+        skills: row.skills ?? null,
+        bio: row.bio ?? null,
+        githubUrl: row.github_url ?? null,
+        resumeUrl: row.user_resume_url ?? null,
+      },
+    }));
+  } catch (error) {
+    console.error("My project applications query failed:", error);
+    return [];
+  }
+}
+
 async function createApplication(projectId: number, body: any, authUser: AuthUser) {
   const db = getPool();
   if (!db) {
@@ -1021,6 +1129,19 @@ export default async function handler(req: any, res: any) {
       const effectiveUserId = await getEffectiveUserId(authUser);
       const projects = await getProjectsForOwner(effectiveUserId);
       return sendJson(res, 200, projects);
+    }
+
+    if (
+      method === "GET" &&
+      (path === "/api/users/applications" || path === "/api/my-applications")
+    ) {
+      const applications = await getApplicationsForUser(authUser);
+      return sendJson(res, 200, applications);
+    }
+
+    if (method === "GET" && path === "/api/my-project-applications") {
+      const applications = await getApplicationsToMyProjects(authUser);
+      return sendJson(res, 200, applications);
     }
 
     const projectMatch = path.match(/^\/api\/projects\/(\d+)$/);
