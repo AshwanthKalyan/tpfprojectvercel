@@ -15,6 +15,7 @@ export default function SignUpPage() {
   const [emailError, setEmailError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const otpSlots = Array.from({ length: 6 }, (_, index) => code[index] || "");
 
   const canSubmit = useMemo(() => !isSubmitting, [isSubmitting]);
 
@@ -133,6 +134,19 @@ export default function SignUpPage() {
     }
   };
 
+  const otpBoxClassName = (index: number) => {
+    const isActive = index === Math.min(code.length, otpSlots.length - 1);
+    const isFilled = !!otpSlots[index];
+
+    return [
+      "flex h-14 items-center justify-center rounded-xl border text-xl font-mono font-bold transition-all",
+      isFilled
+        ? "border-pink-300 bg-pink-300/10 text-pink-100 shadow-[0_0_18px_rgba(244,114,182,0.2)]"
+        : "border-pink-400/35 bg-black/50 text-pink-200/35",
+      !isFilled && isActive ? "border-cyan-300/70 shadow-[0_0_18px_rgba(103,232,249,0.18)]" : "",
+    ].join(" ");
+  };
+
   return (
     <main className="relative min-h-screen overflow-hidden bg-black text-white">
       <div
@@ -179,6 +193,7 @@ export default function SignUpPage() {
                   autoComplete="email"
                   placeholder="rollnumber@nitt.edu"
                   value={emailAddress}
+                  className="border-pink-400/50 bg-black/70 text-pink-100 placeholder:text-pink-200/35 focus-visible:ring-pink-300 focus-visible:ring-offset-0"
                   onChange={(event) => {
                     setEmailAddress(event.target.value);
                     if (emailError) {
@@ -201,6 +216,7 @@ export default function SignUpPage() {
                   autoComplete="new-password"
                   placeholder="Create a strong password"
                   value={password}
+                  className="border-pink-400/50 bg-black/70 text-pink-100 placeholder:text-pink-200/35 focus-visible:ring-pink-300 focus-visible:ring-offset-0"
                   onChange={(event) => setPassword(event.target.value)}
                 />
               </div>
@@ -223,13 +239,32 @@ export default function SignUpPage() {
                 <label className="text-xs font-mono uppercase tracking-[0.35em] text-pink-200/70">
                   Verification Code
                 </label>
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="Enter the OTP from your email"
-                  value={code}
-                  onChange={(event) => setCode(event.target.value)}
-                />
+                <div className="space-y-3">
+                  <div className="relative">
+                    <div className="grid grid-cols-6 gap-2">
+                      {otpSlots.map((digit, index) => (
+                        <div key={index} className={otpBoxClassName(index)}>
+                          {digit}
+                        </div>
+                      ))}
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      aria-label="Verification code"
+                      maxLength={6}
+                      value={code}
+                      onChange={(event) =>
+                        setCode(event.target.value.replace(/\D/g, "").slice(0, 6))
+                      }
+                      className="absolute inset-0 h-full w-full cursor-text opacity-0"
+                    />
+                  </div>
+                  <p className="text-xs font-mono text-pink-200/60">
+                    Enter the 6-digit OTP sent to {emailAddress || "your NITT webmail"}.
+                  </p>
+                </div>
               </div>
               {errorMessage ? (
                 <p className="text-xs font-mono text-red-400">{errorMessage}</p>

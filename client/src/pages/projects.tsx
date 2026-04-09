@@ -4,6 +4,26 @@ import { useLocation } from "wouter";
 import { Plus, Search, Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
 
+function looksLikeInternalId(value: unknown) {
+  return typeof value === "string" && value.startsWith("user_");
+}
+
+function getProjectCreatorLabel(project: any) {
+  if (project?.creatorName && !looksLikeInternalId(project.creatorName)) {
+    return project.creatorName;
+  }
+
+  if (project?.creatorEmail) {
+    return project.creatorEmail;
+  }
+
+  if (project?.owner_id && !looksLikeInternalId(project.owner_id)) {
+    return project.owner_id;
+  }
+
+  return "Project Creator";
+}
+
 function hasRequiredProfile(user: any) {
   return !!(
     user?.firstName?.trim() &&
@@ -198,13 +218,13 @@ export default function Projects() {
 
       {/* PROJECT GRID */}
       {filteredProjects && filteredProjects.length > 0 ? (
-        <div className="columns-1 md:columns-2 xl:columns-3 gap-6">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
           {filteredProjects.map((project: any) => (
             <button
               key={project.id}
               type="button"
               onClick={() => setLocation(`/projects/${project.id}`)}
-              className="mb-6 block w-full break-inside-avoid text-left"
+              className="block w-full text-left"
             >
               <div className="border p-6 bg-background/20 hover:bg-background/40 transition rounded-lg shadow-md hover:shadow-lg cursor-pointer flex flex-col gap-3 min-h-[220px]">
                 <div className="flex items-center justify-between">
@@ -214,7 +234,7 @@ export default function Projects() {
                   </span>
                 </div>
                 <div className="text-xs font-mono uppercase tracking-wider text-primary/70">
-                  By {project.creatorName || project.creatorEmail || project.owner_id}
+                  By {getProjectCreatorLabel(project)}
                 </div>
                 <p className="text-sm text-muted-foreground line-clamp-4">
                   {project.description}

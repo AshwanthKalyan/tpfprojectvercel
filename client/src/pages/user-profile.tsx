@@ -2,6 +2,10 @@ import { useRoute, Link } from "wouter";
 import { Terminal, ArrowLeft, ExternalLink } from "lucide-react";
 import { useUserProfile } from "@/hooks/use-users";
 
+function looksLikeInternalId(value: unknown) {
+  return typeof value === "string" && value.startsWith("user_");
+}
+
 export default function UserProfile() {
   const [, params] = useRoute("/users/:id");
   const userId = params?.id || "";
@@ -34,7 +38,12 @@ export default function UserProfile() {
       ? `${user.firstName} ${user.lastName}`.trim()
       : "";
   const displayName =
-    fullName || user.creatorName || user.email || "Project Creator";
+    fullName ||
+    (user.creatorName && !looksLikeInternalId(user.creatorName)
+      ? user.creatorName
+      : null) ||
+    user.email ||
+    "Project Creator";
 
   return (
     <div className="space-y-8 max-w-4xl mx-auto">

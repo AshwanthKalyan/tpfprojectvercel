@@ -18,6 +18,26 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+function looksLikeInternalId(value: unknown) {
+  return typeof value === "string" && value.startsWith("user_");
+}
+
+function getProjectCreatorLabel(project: any) {
+  if (project?.creatorName && !looksLikeInternalId(project.creatorName)) {
+    return project.creatorName;
+  }
+
+  if (project?.creatorEmail) {
+    return project.creatorEmail;
+  }
+
+  if (project?.owner_id && !looksLikeInternalId(project.owner_id)) {
+    return project.owner_id;
+  }
+
+  return "Project Creator";
+}
+
 export default function ProjectDetails() {
   const [, params] = useRoute("/projects/:id");
   const projectId = Number(params?.id || 0);
@@ -237,7 +257,7 @@ export default function ProjectDetails() {
           <span>
             Creator:
             <span className="ml-2 font-bold">
-              {project.creatorName || project.owner_id}
+              {getProjectCreatorLabel(project)}
             </span>
           </span>
 
