@@ -5,21 +5,28 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { isNittEmail } from "@/lib/nitt-auth";
 
+type SignInStep = "sign_in" | "verify_device" | "reset_password";
+
 export default function SignInPage() {
   const { isLoaded, signIn, setActive } = useSignIn();
   const [, setLocation] = useLocation();
 
   const [emailAddress, setEmailAddress] = useState("");
   const [password, setPassword] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
   const [code, setCode] = useState("");
-  const [pendingVerification, setPendingVerification] = useState(false);
+  const [step, setStep] = useState<SignInStep>("sign_in");
+  const [resetCodeSent, setResetCodeSent] = useState(false);
   const [verificationTarget, setVerificationTarget] = useState("");
+  const [verificationOrigin, setVerificationOrigin] = useState<"sign_in" | "reset_password">("sign_in");
   const [emailError, setEmailError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const canSubmit = useMemo(() => !isSubmitting, [isSubmitting]);
   const otpSlots = Array.from({ length: 6 }, (_, index) => code[index] || "");
+  const isVerifyingDevice = step === "verify_device";
+  const isResettingPassword = step === "reset_password";
 
   const otpBoxClassName = (index: number) => {
     const isActive = index === Math.min(code.length, otpSlots.length - 1);
@@ -51,6 +58,66 @@ export default function SignInPage() {
     setLocation("/projects", { replace: true });
   };
 
+  const validateEmailAddress = () => {
+    if (emailAddress.trim().length === 0) {
+      setEmailError("Enter your NITT webmail.");
+      return false;
+    }
+
+    if (!isNittEmail(emailAddress)) {
+      setEmailError("Enter your NITT webmail.");
+      return false;
+    }
+
+    return true;
+  };
+
+  const resetToSignIn = () => {
+    setStep("sign_in");
+    setResetCodeSent(false);
+    setVerificationOrigin("sign_in");
+    setVerificationTarget("");
+    setCode("");
+    setResetPassword("");
+    setErrorMessage(null);
+  };
+
+  const startPasswordReset = () => {
+    setStep("reset_password");
+    setResetCodeSent(false);
+    setVerificationTarget(emailAddress.trim());
+    setCode("");
+    setResetPassword("");
+    setErrorMessage(null);
+    setEmailError(null);
+  };
+
+  const prepareEmailSecondFactor = async (
+    signInAttempt: any,
+    origin: "sign_in" | "reset_password",
+    fallbackIdentifier: string
+  ) => {
+    const emailCodeFactor = signInAttempt.supportedSecondFactors?.find(
+      (factor: any) => factor?.strategy === "email_code"
+    ) as { emailAddressId?: string; safeIdentifier?: string } | undefined;
+
+    if (!emailCodeFactor?.emailAddressId || !signIn) {
+      setErrorMessage("This sign-in verification method is not available.");
+      return false;
+    }
+
+    await signIn.prepareSecondFactor({
+      strategy: "email_code",
+      emailAddressId: emailCodeFactor.emailAddressId,
+    });
+
+    setVerificationOrigin(origin);
+    setVerificationTarget(emailCodeFactor.safeIdentifier || fallbackIdentifier);
+    setCode("");
+    setStep("verify_device");
+    return true;
+  };
+
   const handleStartSignIn = async (event: FormEvent) => {
     event.preventDefault();
     setErrorMessage(null);
@@ -60,13 +127,7 @@ export default function SignInPage() {
       return;
     }
 
-    if (emailAddress.trim().length === 0) {
-      setEmailError("Enter your NITT webmail.");
-      return;
-    }
-
-    if (!isNittEmail(emailAddress)) {
-      setEmailError("Enter your NITT webmail.");
+    if (!validateEmailAddress()) {
       return;
     }
 
@@ -88,24 +149,11 @@ export default function SignInPage() {
       }
 
       if (signInAttempt.status === "needs_second_factor") {
-        const emailCodeFactor = signInAttempt.supportedSecondFactors?.find(
-          (factor: any) => factor?.strategy === "email_code"
-        ) as { emailAddressId?: string; safeIdentifier?: string } | undefined;
-
-        if (!emailCodeFactor?.emailAddressId) {
-          setErrorMessage("This sign-in verification method is not available.");
-          return;
-        }
-
-        await signIn.prepareSecondFactor({
-          strategy: "email_code",
-          emailAddressId: emailCodeFactor.emailAddressId,
-        });
-
-        setVerificationTarget(
-          emailCodeFactor.safeIdentifier || emailAddress.trim()
+        await prepareEmailSecondFactor(
+          signInAttempt,
+          "sign_in",
+          emailAddress.trim()
         );
-        setPendingVerification(true);
         return;
       }
 
@@ -115,6 +163,100 @@ export default function SignInPage() {
         error?.errors?.[0]?.message ||
         error?.message ||
         "Unable to sign in. Please try again.";
+      setErrorMessage(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRequestPasswordReset = async (event: FormEvent) => {
+    event.preventDefault();
+    setErrorMessage(null);
+    setEmailError(null);
+
+    if (!isLoaded || !signIn) {
+      return;
+    }
+
+    if (!validateEmailAddress()) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await signIn.create({
+        strategy: "reset_password_email_code",
+        identifier: emailAddress.trim(),
+      });
+
+      setVerificationTarget(emailAddress.trim());
+      setResetCodeSent(true);
+      setCode("");
+      setResetPassword("");
+    } catch (error: any) {
+      const message =
+        error?.errors?.[0]?.longMessage ||
+        error?.errors?.[0]?.message ||
+        error?.message ||
+        "Unable to start password reset. Please try again.";
+      setErrorMessage(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleResetPassword = async (event: FormEvent) => {
+    event.preventDefault();
+    setErrorMessage(null);
+    setEmailError(null);
+
+    if (!isLoaded || !signIn) {
+      return;
+    }
+
+    if (!validateEmailAddress()) {
+      return;
+    }
+
+    if (code.trim().length !== 6) {
+      setErrorMessage("Enter the 6-digit reset code.");
+      return;
+    }
+
+    if (resetPassword.length === 0) {
+      setErrorMessage("Enter a new password.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const signInAttempt = await signIn.attemptFirstFactor({
+        strategy: "reset_password_email_code",
+        code,
+        password: resetPassword,
+      });
+
+      if (signInAttempt.status === "complete") {
+        await finalizeSignIn(signInAttempt.createdSessionId);
+        return;
+      }
+
+      if (signInAttempt.status === "needs_second_factor") {
+        await prepareEmailSecondFactor(
+          signInAttempt,
+          "reset_password",
+          emailAddress.trim()
+        );
+        return;
+      }
+
+      setErrorMessage("Password reset is incomplete. Please try again.");
+    } catch (error: any) {
+      const message =
+        error?.errors?.[0]?.longMessage ||
+        error?.errors?.[0]?.message ||
+        error?.message ||
+        "Unable to reset your password. Please try again.";
       setErrorMessage(message);
     } finally {
       setIsSubmitting(false);
@@ -173,12 +315,20 @@ export default function SignInPage() {
             ACCOUNT ACCESS
           </div>
           <h1 className="text-4xl md:text-5xl font-mono tracking-widest text-cyan-200 drop-shadow-[0_0_20px_rgba(0,255,255,0.6)]">
-            {pendingVerification ? "VERIFY DEVICE" : "SIGN IN"}
+            {isVerifyingDevice
+              ? "VERIFY DEVICE"
+              : isResettingPassword
+                ? "RESET PASSWORD"
+                : "SIGN IN"}
           </h1>
           <p className="text-sm font-mono text-cyan-100/70">
-            {pendingVerification
+            {isVerifyingDevice
               ? "A new-device verification code was sent to your NITT webmail."
-              : "Sign in with your NITT webmail to access the Product Folks grid."}
+              : isResettingPassword
+                ? resetCodeSent
+                  ? "Enter the reset code from your NITT webmail and choose a new password."
+                  : "Send a reset code to your NITT webmail and recover your account."
+                : "Sign in with your NITT webmail to access the Product Folks grid."}
           </p>
           <div className="flex flex-wrap gap-4 text-xs font-mono uppercase tracking-[0.35em] text-cyan-200/70">
             <Link href="/sign-up" className="hover:text-cyan-200">
@@ -191,7 +341,7 @@ export default function SignInPage() {
         </div>
 
         <div className="rounded-2xl border border-cyan-400/40 bg-black/60 p-6 shadow-[0_0_40px_rgba(0,255,255,0.1)] backdrop-blur-xl">
-          {!pendingVerification && (
+          {step === "sign_in" && (
             <form className="space-y-4" onSubmit={handleStartSignIn}>
               <div className="space-y-2">
                 <label className="text-xs font-mono uppercase tracking-[0.35em] text-cyan-200/70">
@@ -229,6 +379,14 @@ export default function SignInPage() {
                 />
               </div>
 
+              <button
+                type="button"
+                className="text-xs font-mono uppercase tracking-[0.35em] text-cyan-200/70 hover:text-cyan-200"
+                onClick={startPasswordReset}
+              >
+                FORGOT PASSWORD?
+              </button>
+
               {errorMessage ? (
                 <p className="text-xs font-mono text-red-400">{errorMessage}</p>
               ) : null}
@@ -243,7 +401,118 @@ export default function SignInPage() {
             </form>
           )}
 
-          {pendingVerification && (
+          {step === "reset_password" && (
+            <form
+              className="space-y-4"
+              onSubmit={resetCodeSent ? handleResetPassword : handleRequestPasswordReset}
+            >
+              <div className="space-y-2">
+                <label className="text-xs font-mono uppercase tracking-[0.35em] text-cyan-200/70">
+                  NITT Webmail
+                </label>
+                <Input
+                  type="email"
+                  autoComplete="email"
+                  placeholder="rollnumber@nitt.edu"
+                  value={emailAddress}
+                  className="border-cyan-400/50 bg-black/70 text-cyan-100 placeholder:text-cyan-200/35 focus-visible:ring-cyan-300 focus-visible:ring-offset-0"
+                  onChange={(event) => {
+                    setEmailAddress(event.target.value);
+                    if (emailError) {
+                      setEmailError(null);
+                    }
+                  }}
+                />
+                {emailError ? (
+                  <p className="text-xs font-mono text-red-400">{emailError}</p>
+                ) : null}
+              </div>
+
+              {resetCodeSent && (
+                <>
+                  <div className="space-y-2">
+                    <label className="text-xs font-mono uppercase tracking-[0.35em] text-cyan-200/70">
+                      Reset Code
+                    </label>
+                    <div className="space-y-3">
+                      <div className="relative">
+                        <div className="grid grid-cols-6 gap-2">
+                          {otpSlots.map((digit, index) => (
+                            <div key={index} className={otpBoxClassName(index)}>
+                              {digit}
+                            </div>
+                          ))}
+                        </div>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="one-time-code"
+                          aria-label="Reset code"
+                          maxLength={6}
+                          value={code}
+                          onChange={(event) =>
+                            setCode(event.target.value.replace(/\D/g, "").slice(0, 6))
+                          }
+                          className="absolute inset-0 h-full w-full cursor-text opacity-0"
+                        />
+                      </div>
+                      <p className="text-xs font-mono text-cyan-200/60">
+                        Enter the 6-digit reset code sent to{" "}
+                        {verificationTarget || emailAddress || "your NITT webmail"}.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-mono uppercase tracking-[0.35em] text-cyan-200/70">
+                      New Password
+                    </label>
+                    <Input
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder="Create a new password"
+                      value={resetPassword}
+                      className="border-cyan-400/50 bg-black/70 text-cyan-100 placeholder:text-cyan-200/35 focus-visible:ring-cyan-300 focus-visible:ring-offset-0"
+                      onChange={(event) => setResetPassword(event.target.value)}
+                    />
+                  </div>
+                </>
+              )}
+
+              {errorMessage ? (
+                <p className="text-xs font-mono text-red-400">{errorMessage}</p>
+              ) : null}
+
+              <Button
+                type="submit"
+                className="w-full bg-cyan-400 text-black hover:bg-cyan-300"
+                disabled={
+                  isSubmitting ||
+                  (resetCodeSent
+                    ? code.trim().length !== 6 || resetPassword.length === 0
+                    : !canSubmit)
+                }
+              >
+                {isSubmitting
+                  ? resetCodeSent
+                    ? "RESETTING..."
+                    : "SENDING..."
+                  : resetCodeSent
+                    ? "RESET PASSWORD"
+                    : "SEND RESET CODE"}
+              </Button>
+
+              <button
+                type="button"
+                className="w-full text-xs font-mono uppercase tracking-[0.35em] text-cyan-200/70 hover:text-cyan-200"
+                onClick={resetToSignIn}
+              >
+                BACK TO SIGN IN
+              </button>
+            </form>
+          )}
+
+          {isVerifyingDevice && (
             <form className="space-y-4" onSubmit={handleVerifyCode}>
               <div className="space-y-2">
                 <label className="text-xs font-mono uppercase tracking-[0.35em] text-cyan-200/70">
@@ -294,12 +563,14 @@ export default function SignInPage() {
                 type="button"
                 className="w-full text-xs font-mono uppercase tracking-[0.35em] text-cyan-200/70 hover:text-cyan-200"
                 onClick={() => {
-                  setPendingVerification(false);
+                  setStep(verificationOrigin === "reset_password" ? "reset_password" : "sign_in");
                   setCode("");
                   setErrorMessage(null);
                 }}
               >
-                Use Another Account
+                {verificationOrigin === "reset_password"
+                  ? "BACK TO RESET PASSWORD"
+                  : "USE ANOTHER ACCOUNT"}
               </button>
             </form>
           )}
