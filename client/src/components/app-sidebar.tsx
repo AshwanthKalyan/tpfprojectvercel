@@ -43,7 +43,7 @@ export function AppSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel className="font-display text-primary text-xl tracking-widest mt-4 mb-6">
-            PROJECT NEXUS
+            PROJECT SYNC
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>

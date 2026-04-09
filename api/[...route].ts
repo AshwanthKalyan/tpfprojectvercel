@@ -472,6 +472,38 @@ async function getEffectiveUserId(authUser: AuthUser) {
   return user?.id ?? authUser.userId;
 }
 
+async function getUserIdentityCandidates(authUser: AuthUser | null) {
+  if (!authUser) {
+    return [];
+  }
+
+  const identities = new Set<string>();
+
+  if (authUser.userId) {
+    identities.add(authUser.userId);
+  }
+
+  if (authUser.email) {
+    identities.add(authUser.email);
+  }
+
+  const ensuredUser = await ensureUser(authUser);
+  if (ensuredUser?.id) {
+    identities.add(ensuredUser.id);
+  }
+
+  if (ensuredUser?.email) {
+    identities.add(ensuredUser.email);
+  }
+
+  const userByEmail = await getUserByEmail(authUser.email);
+  if (userByEmail?.id) {
+    identities.add(userByEmail.id);
+  }
+
+  return Array.from(identities).filter(Boolean);
+}
+
 async function getCurrentUser(authUser: AuthUser | null) {
   if (!authUser) {
     return null;
@@ -593,6 +625,24 @@ async function getProjectsForOwner(ownerId: string) {
   }
 }
 
+async function getProjectsForOwners(ownerIds: string[]) {
+  const db = getPool();
+  if (!db || ownerIds.length === 0) {
+    return [];
+  }
+
+  try {
+    const result = await db.query(
+      "SELECT * FROM projects WHERE owner_id = ANY($1::text[]) ORDER BY created_at DESC",
+      [ownerIds]
+    );
+    return Promise.all(result.rows.map((row) => decorateProject(row)));
+  } catch (error) {
+    console.error("Owner projects query failed:", error);
+    return [];
+  }
+}
+
 async function getProjectById(projectId: number) {
   const db = getPool();
   if (!db) {
@@ -667,13 +717,17 @@ async function getApplicationsForProject(projectId: number, authUser: AuthUser |
   }
 
   const effectiveUserId = await getEffectiveUserId(authUser);
+  const identityCandidates = await getUserIdentityCandidates(authUser);
 
   const project = await getProjectById(projectId);
   if (!project) {
     return [];
   }
 
-  const isOwner = project.owner_id === effectiveUserId;
+  const isOwner =
+    !!project.owner_id &&
+    (project.owner_id === effectiveUserId ||
+      identityCandidates.includes(project.owner_id));
 
   try {
     if (isOwner) {
@@ -724,9 +778,9 @@ async function getApplicationsForProject(projectId: number, authUser: AuthUser |
     const result = await db.query(
       `SELECT *
        FROM applications
-       WHERE project_id=$1 AND applicant_id=$2
+       WHERE project_id=$1 AND applicant_id = ANY($2::text[])
        ORDER BY created_at DESC`,
-      [projectId, effectiveUserId]
+      [projectId, identityCandidates]
     );
 
     return result.rows.map((row) => ({
@@ -750,7 +804,10 @@ async function getApplicationsForUser(authUser: AuthUser | null) {
     return [];
   }
 
-  const effectiveUserId = await getEffectiveUserId(authUser);
+  const identityCandidates = await getUserIdentityCandidates(authUser);
+  if (identityCandidates.length === 0) {
+    return [];
+  }
 
   try {
     const result = await db.query(
@@ -765,9 +822,9 @@ async function getApplicationsForUser(authUser: AuthUser | null) {
         p.title AS project_title
        FROM applications a
        LEFT JOIN projects p ON a.project_id = p.id
-       WHERE a.applicant_id = $1
+       WHERE a.applicant_id = ANY($1::text[])
        ORDER BY a.created_at DESC`,
-      [effectiveUserId]
+      [identityCandidates]
     );
 
     return result.rows.map((row) => ({
@@ -792,7 +849,10 @@ async function getApplicationsToMyProjects(authUser: AuthUser | null) {
     return [];
   }
 
-  const effectiveUserId = await getEffectiveUserId(authUser);
+  const identityCandidates = await getUserIdentityCandidates(authUser);
+  if (identityCandidates.length === 0) {
+    return [];
+  }
 
   try {
     const result = await db.query(
@@ -819,9 +879,9 @@ async function getApplicationsToMyProjects(authUser: AuthUser | null) {
        FROM applications a
        JOIN projects p ON a.project_id = p.id
        LEFT JOIN users u ON a.applicant_id = u.id
-       WHERE p.owner_id = $1
+       WHERE p.owner_id = ANY($1::text[])
        ORDER BY a.created_at DESC`,
-      [effectiveUserId]
+      [identityCandidates]
     );
 
     return result.rows.map((row) => ({
@@ -859,13 +919,17 @@ async function createApplication(projectId: number, body: any, authUser: AuthUse
   }
 
   const effectiveUserId = await getEffectiveUserId(authUser);
+  const identityCandidates = await getUserIdentityCandidates(authUser);
 
   const project = await getProjectById(projectId);
   if (!project) {
     throw new Error("Project not found");
   }
 
-  if (project.owner_id === effectiveUserId) {
+  if (
+    project.owner_id === effectiveUserId ||
+    identityCandidates.includes(project.owner_id)
+  ) {
     throw new Error("Cannot apply to your own project");
   }
 
@@ -874,8 +938,8 @@ async function createApplication(projectId: number, body: any, authUser: AuthUse
 
   try {
     const existing = await db.query(
-      "SELECT id FROM applications WHERE project_id=$1 AND applicant_id=$2",
-      [projectId, effectiveUserId]
+      "SELECT id FROM applications WHERE project_id=$1 AND applicant_id = ANY($2::text[])",
+      [projectId, identityCandidates]
     );
 
     existingApplicationId = existing.rows[0]?.id ?? null;
@@ -885,8 +949,9 @@ async function createApplication(projectId: number, body: any, authUser: AuthUse
 
   if (existingApplicationId) {
     const assignments = [
-      "resume_url=$2",
-      "message=$3",
+      "applicant_id=$2",
+      "resume_url=$3",
+      "message=$4",
       "status='pending'",
     ];
 
@@ -903,7 +968,12 @@ async function createApplication(projectId: number, body: any, authUser: AuthUse
        SET ${assignments.join(", ")}
        WHERE id=$1
        RETURNING *`,
-      [existingApplicationId, body.resumeUrl ?? null, body.message ?? null]
+      [
+        existingApplicationId,
+        effectiveUserId,
+        body.resumeUrl ?? null,
+        body.message ?? null,
+      ]
     );
 
     const row = updated.rows[0];
@@ -945,13 +1015,17 @@ async function updateProject(projectId: number, body: any, authUser: AuthUser) {
   }
 
   const effectiveUserId = await getEffectiveUserId(authUser);
+  const identityCandidates = await getUserIdentityCandidates(authUser);
 
   const project = await getProjectById(projectId);
   if (!project) {
     throw new Error("Project not found");
   }
 
-  if (project.owner_id !== effectiveUserId) {
+  if (
+    project.owner_id !== effectiveUserId &&
+    !identityCandidates.includes(project.owner_id)
+  ) {
     throw new Error("Not authorized");
   }
 
@@ -978,7 +1052,7 @@ async function updateProject(projectId: number, body: any, authUser: AuthUser) {
   }
 
   values.push(projectId);
-  values.push(effectiveUserId);
+  values.push(project.owner_id);
 
   const result = await db.query(
     `UPDATE projects
@@ -998,13 +1072,17 @@ async function deleteProject(projectId: number, authUser: AuthUser) {
   }
 
   const effectiveUserId = await getEffectiveUserId(authUser);
+  const identityCandidates = await getUserIdentityCandidates(authUser);
 
   const project = await getProjectById(projectId);
   if (!project) {
     throw new Error("Project not found");
   }
 
-  if (project.owner_id !== effectiveUserId) {
+  if (
+    project.owner_id !== effectiveUserId &&
+    !identityCandidates.includes(project.owner_id)
+  ) {
     throw new Error("Not authorized");
   }
 
@@ -1016,7 +1094,7 @@ async function deleteProject(projectId: number, authUser: AuthUser) {
 
   await db.query("DELETE FROM projects WHERE id=$1 AND owner_id=$2", [
     projectId,
-    effectiveUserId,
+    project.owner_id,
   ]);
 }
 
@@ -1031,6 +1109,7 @@ async function updateApplicationStatus(
   }
 
   const effectiveUserId = await getEffectiveUserId(authUser);
+  const identityCandidates = await getUserIdentityCandidates(authUser);
 
   const result = await db.query(
     `UPDATE applications a
@@ -1040,10 +1119,10 @@ async function updateApplicationStatus(
          SELECT 1
          FROM projects p
          WHERE p.id = a.project_id
-           AND p.owner_id = $3
+           AND p.owner_id = ANY($3::text[])
        )
      RETURNING *`,
-    [status, applicationId, effectiveUserId]
+    [status, applicationId, identityCandidates]
   );
 
   if (!result.rows[0]) {
@@ -1159,8 +1238,8 @@ export default async function handler(req: any, res: any) {
         return sendJson(res, 200, []);
       }
 
-      const effectiveUserId = await getEffectiveUserId(authUser);
-      const projects = await getProjectsForOwner(effectiveUserId);
+      const identityCandidates = await getUserIdentityCandidates(authUser);
+      const projects = await getProjectsForOwners(identityCandidates);
       return sendJson(res, 200, projects);
     }
 

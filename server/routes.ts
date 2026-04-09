@@ -79,6 +79,36 @@ async function getUserIdByEmail(email: string) {
   return result.rows[0]?.id ?? null;
 }
 
+async function getRequestIdentityCandidates(user: {
+  id?: string | null;
+  clerkUserId?: string | null;
+  email?: string | null;
+}) {
+  const identities = new Set<string>();
+
+  if (user.id) {
+    identities.add(user.id);
+  }
+
+  if (user.clerkUserId) {
+    identities.add(user.clerkUserId);
+  }
+
+  if (user.email) {
+    identities.add(user.email);
+    try {
+      const existingUserId = await getUserIdByEmail(user.email);
+      if (existingUserId) {
+        identities.add(existingUserId);
+      }
+    } catch (error) {
+      console.warn("Identity email lookup warning:", error);
+    }
+  }
+
+  return Array.from(identities);
+}
+
 async function getClerkUserSafe(userId: string) {
   try {
     return await clerkClient.users.getUser(userId);
@@ -464,9 +494,11 @@ export async function registerRoutes(app: Express) {
         return res.json([]);
       }
 
+      const identityCandidates = await getRequestIdentityCandidates(req.user);
+
       const result = await pool.query(
-        "SELECT * FROM projects WHERE owner_id=$1 ORDER BY created_at DESC",
-        [req.user.id]
+        "SELECT * FROM projects WHERE owner_id = ANY($1::text[]) ORDER BY created_at DESC",
+        [identityCandidates]
       );
 
       res.json(result.rows);
@@ -512,6 +544,7 @@ export async function registerRoutes(app: Express) {
         return res.status(400).json({ message: "Invalid project id" });
       }
 
+      const identityCandidates = await getRequestIdentityCandidates(req.user);
       const { title, description, duration, comms_link } = req.body;
 
       const result = await pool.query(
@@ -520,9 +553,9 @@ export async function registerRoutes(app: Express) {
              description=$2,
              duration=$3,
              comms_link=$4
-         WHERE id=$5 AND owner_id=$6
+         WHERE id=$5 AND owner_id = ANY($6::text[])
          RETURNING *`,
-        [title, description, duration, comms_link, projectId, req.user.id]
+        [title, description, duration, comms_link, projectId, identityCandidates]
       );
 
       if (!result.rows[0]) {
@@ -546,6 +579,8 @@ export async function registerRoutes(app: Express) {
         return res.status(400).json({ message: "Invalid project id" });
       }
 
+      const identityCandidates = await getRequestIdentityCandidates(req.user);
+
       const ownerCheck = await pool.query(
         "SELECT owner_id FROM projects WHERE id=$1",
         [projectId]
@@ -555,7 +590,7 @@ export async function registerRoutes(app: Express) {
         return res.status(404).json({ message: "Project not found" });
       }
 
-      if (ownerCheck.rows[0].owner_id !== req.user.id) {
+      if (!identityCandidates.includes(ownerCheck.rows[0].owner_id)) {
         return res.status(403).json({ message: "Not authorized" });
       }
 
@@ -571,8 +606,8 @@ export async function registerRoutes(app: Express) {
       }
 
       const result = await pool.query(
-        "DELETE FROM projects WHERE id=$1 RETURNING id",
-        [projectId]
+        "DELETE FROM projects WHERE id=$1 AND owner_id = ANY($2::text[]) RETURNING id",
+        [projectId, identityCandidates]
       );
 
       await pool.query("COMMIT");
@@ -595,6 +630,7 @@ export async function registerRoutes(app: Express) {
   app.get("/api/projects/:projectId/applications", isAuthenticated, async (req, res) => {
     try {
       const projectId = Number(req.params.projectId);
+      const identityCandidates = await getRequestIdentityCandidates(req.user);
       const ownerRes = await pool.query(
         "SELECT owner_id FROM projects WHERE id=$1",
         [projectId]
@@ -604,7 +640,7 @@ export async function registerRoutes(app: Express) {
         return res.status(404).json({ message: "Project not found" });
       }
 
-      const isOwner = ownerRes.rows[0].owner_id === req.user.id;
+      const isOwner = identityCandidates.includes(ownerRes.rows[0].owner_id);
 
       if (isOwner) {
         const result = await pool.query(
@@ -627,7 +663,7 @@ export async function registerRoutes(app: Express) {
             u.github_url,
             u.resume_url AS user_resume_url
           FROM applications a
-          JOIN users u ON a.applicant_id = u.id
+          LEFT JOIN users u ON a.applicant_id = u.id
           WHERE a.project_id = $1
           ORDER BY a.created_at DESC`,
           [projectId]
@@ -643,16 +679,16 @@ export async function registerRoutes(app: Express) {
             status: row.status,
             createdAt: row.created_at,
             applicant: {
-              id: row.user_id,
-              email: row.email,
-              firstName: row.first_name,
-              lastName: row.last_name,
-              department: row.department,
-              year: row.year_of_study,
-              skills: row.skills,
-              bio: row.bio,
-              githubUrl: row.github_url,
-              resumeUrl: row.user_resume_url,
+              id: row.user_id ?? row.applicant_id,
+              email: row.email ?? null,
+              firstName: row.first_name ?? null,
+              lastName: row.last_name ?? null,
+              department: row.department ?? null,
+              year: row.year_of_study ?? null,
+              skills: row.skills ?? null,
+              bio: row.bio ?? null,
+              githubUrl: row.github_url ?? null,
+              resumeUrl: row.user_resume_url ?? null,
             },
           }))
         );
@@ -668,9 +704,9 @@ export async function registerRoutes(app: Express) {
           status,
           created_at
         FROM applications
-        WHERE project_id=$1 AND applicant_id=$2
+        WHERE project_id=$1 AND applicant_id = ANY($2::text[])
         ORDER BY created_at DESC`,
-        [projectId, req.user.id]
+        [projectId, identityCandidates]
       );
 
       return res.json(
@@ -696,6 +732,7 @@ export async function registerRoutes(app: Express) {
   app.post("/api/projects/:projectId/applications", isAuthenticated, async (req, res) => {
     try {
       const projectId = Number(req.params.projectId);
+      const identityCandidates = await getRequestIdentityCandidates(req.user);
       const { resumeUrl, message } = req.body;
 
       const projectRes = await pool.query(
@@ -707,13 +744,13 @@ export async function registerRoutes(app: Express) {
         return res.status(404).json({ message: "Project not found" });
       }
 
-      if (projectRes.rows[0].owner_id === req.user.id) {
+      if (identityCandidates.includes(projectRes.rows[0].owner_id)) {
         return res.status(400).json({ message: "Cannot apply to your own project" });
       }
 
       const existing = await pool.query(
-        "SELECT id FROM applications WHERE project_id=$1 AND applicant_id=$2",
-        [projectId, req.user.id]
+        "SELECT id FROM applications WHERE project_id=$1 AND applicant_id = ANY($2::text[])",
+        [projectId, identityCandidates]
       );
 
       if (existing.rows[0]) {
@@ -747,8 +784,9 @@ export async function registerRoutes(app: Express) {
   // =========================
   // LIST MY SUBMISSIONS
   // =========================
-  app.get("/api/users/applications", isAuthenticated, async (req, res) => {
+  app.get(["/api/users/applications", "/api/my-applications"], isAuthenticated, async (req, res) => {
     try {
+      const identityCandidates = await getRequestIdentityCandidates(req.user);
       const result = await pool.query(
         `SELECT 
           a.id,
@@ -759,9 +797,9 @@ export async function registerRoutes(app: Express) {
           p.title AS project_title
         FROM applications a
         JOIN projects p ON a.project_id = p.id
-        WHERE a.applicant_id = $1
+        WHERE a.applicant_id = ANY($1::text[])
         ORDER BY a.created_at DESC`,
-        [req.user.id]
+        [identityCandidates]
       );
 
       res.json(
@@ -786,6 +824,7 @@ export async function registerRoutes(app: Express) {
   app.patch("/api/applications/:id/status", isAuthenticated, async (req, res) => {
     try {
       const id = Number(req.params.id);
+      const identityCandidates = await getRequestIdentityCandidates(req.user);
       const { status } = req.body;
 
       if (!["pending", "accepted", "rejected"].includes(status)) {
@@ -799,10 +838,10 @@ export async function registerRoutes(app: Express) {
            AND EXISTS (
              SELECT 1 FROM projects p
              WHERE p.id = a.project_id
-               AND p.owner_id = $3
+               AND p.owner_id = ANY($3::text[])
            )
          RETURNING *`,
-        [status, id, req.user.id]
+        [status, id, identityCandidates]
       );
 
       if (!result.rows[0]) {
@@ -830,6 +869,7 @@ export async function registerRoutes(app: Express) {
   // =========================
   app.get("/api/my-project-applications", isAuthenticated, async (req, res) => {
     try {
+      const identityCandidates = await getRequestIdentityCandidates(req.user);
       const result = await pool.query(
         `SELECT 
           a.id,
@@ -852,10 +892,10 @@ export async function registerRoutes(app: Express) {
           u.resume_url AS user_resume_url
         FROM applications a
         JOIN projects p ON a.project_id = p.id
-        JOIN users u ON a.applicant_id = u.id
-        WHERE p.owner_id = $1
+        LEFT JOIN users u ON a.applicant_id = u.id
+        WHERE p.owner_id = ANY($1::text[])
         ORDER BY a.created_at DESC`,
-        [req.user.id]
+        [identityCandidates]
       );
 
       res.json(
@@ -869,16 +909,16 @@ export async function registerRoutes(app: Express) {
           createdAt: row.created_at,
           projectTitle: row.project_title,
           applicant: {
-            id: row.user_id,
-            email: row.email,
-            firstName: row.first_name,
-            lastName: row.last_name,
-            department: row.department,
-            year: row.year_of_study,
-            skills: row.skills,
-            bio: row.bio,
-            githubUrl: row.github_url,
-            resumeUrl: row.user_resume_url,
+            id: row.user_id ?? row.applicant_id,
+            email: row.email ?? null,
+            firstName: row.first_name ?? null,
+            lastName: row.last_name ?? null,
+            department: row.department ?? null,
+            year: row.year_of_study ?? null,
+            skills: row.skills ?? null,
+            bio: row.bio ?? null,
+            githubUrl: row.github_url ?? null,
+            resumeUrl: row.user_resume_url ?? null,
           },
         }))
       );

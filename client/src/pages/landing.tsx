@@ -58,7 +58,7 @@ export default function Landing() {
             </h1>
 
             <h1 className="font-display text-5xl md:text-7xl lg:text-8xl font-bold text-foreground tracking-tighter mb-6 drop-shadow-[0_0_15px_rgba(0,255,255,0.5)]">
-              WITH PROJECT <span className="text-primary">NEXUS</span>
+              WITH PROJECT <span className="text-primary">SYNC</span>
             </h1>
 
             <p className="font-mono text-lg md:text-xl text-muted-foreground max-w-2xl mb-12">
