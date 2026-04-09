@@ -1,6 +1,7 @@
 import { useAuth } from "@/hooks/use-auth";
 import { useUpdateProfile } from "@/hooks/use-users";
 import { toast } from "@/hooks/use-toast";
+import { useUser } from "@clerk/react";
 import { Terminal, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -64,8 +65,12 @@ function getDisplayIdentity(firstName: string, lastName: string, defaultIdentity
 
 export default function Profile() {
   const { user, isLoading } = useAuth();
+  const { user: clerkUser, isLoaded: isClerkUserLoaded } = useUser();
   const updateProfile = useUpdateProfile();
-  const defaultIdentity = user?.email || "";
+  const defaultIdentity =
+    clerkUser?.primaryEmailAddress?.emailAddress ||
+    user?.email ||
+    "";
   
   const [formData, setFormData] = useState({
     firstName: "",
@@ -103,7 +108,7 @@ export default function Profile() {
       user?.creatorName || user?.id || "Not available"
     );
 
-  if (isLoading) {
+  if (isLoading || !isClerkUserLoaded) {
     return (
       <div className="flex items-center justify-center h-64">
         <Terminal className="h-12 w-12 text-primary animate-pulse" />

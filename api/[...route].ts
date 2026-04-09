@@ -114,6 +114,15 @@ function getRollNumber(email: string | null | undefined) {
   return email.split("@")[0] || null;
 }
 
+function isSyntheticNittIdentity(value: string | null | undefined) {
+  if (!value) {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized.startsWith("user_");
+}
+
 function getCreatorDisplayName(params: {
   firstName: string | null;
   lastName: string | null;
@@ -142,7 +151,11 @@ function normalizeUserRow(row: Record<string, any> | null, authUser?: AuthUser |
 
   const firstName = row?.first_name ?? row?.firstName ?? null;
   const lastName = row?.last_name ?? row?.lastName ?? null;
-  const email = row?.email ?? authUser?.email ?? null;
+  const rowEmail = row?.email ?? null;
+  const email =
+    rowEmail && !isSyntheticNittIdentity(rowEmail)
+      ? rowEmail
+      : authUser?.email ?? rowEmail ?? null;
 
   return {
     id: row?.id ?? authUser?.userId ?? null,
@@ -276,7 +289,16 @@ async function ensureUser(authUser: AuthUser) {
       assignments.push(`${column}=$${values.length}`);
     };
 
-    add("email", authUser.email, existingUser.email);
+    const currentEmail =
+      typeof existingUser.email === "string" ? existingUser.email : null;
+    if (
+      userColumns.has("email") &&
+      authUser.email &&
+      (!currentEmail || isSyntheticNittIdentity(currentEmail))
+    ) {
+      values.push(authUser.email);
+      assignments.push(`email=$${values.length}`);
+    }
 
     if (assignments.length > 0) {
       values.push(authUser.userId);
