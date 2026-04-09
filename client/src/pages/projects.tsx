@@ -214,7 +214,7 @@ export default function Projects() {
                   </span>
                 </div>
                 <div className="text-xs font-mono uppercase tracking-wider text-primary/70">
-                  By {project.creatorName || project.creatorEmail?.split("@")[0] || project.owner_id}
+                  By {project.creatorName || project.creatorEmail || project.owner_id}
                 </div>
                 <p className="text-sm text-muted-foreground line-clamp-4">
                   {project.description}

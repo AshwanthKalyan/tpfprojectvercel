@@ -54,18 +54,18 @@ function normalizeSkillsForInput(skills: unknown): string {
   return "";
 }
 
-function getDisplayIdentity(firstName: string, lastName: string, rollNumber: string, fallback: string) {
+function getDisplayIdentity(firstName: string, lastName: string, defaultIdentity: string, fallback: string) {
   const fullName = firstName.trim() && lastName.trim()
     ? `${firstName.trim()} ${lastName.trim()}`
     : "";
 
-  return fullName || rollNumber || fallback;
+  return fullName || defaultIdentity || fallback;
 }
 
 export default function Profile() {
   const { user, isLoading } = useAuth();
   const updateProfile = useUpdateProfile();
-  const rollNumber = user?.email?.split("@")[0] || "";
+  const defaultIdentity = user?.email || "";
   
   const [formData, setFormData] = useState({
     firstName: "",
@@ -99,7 +99,7 @@ export default function Profile() {
     getDisplayIdentity(
       formData.firstName,
       formData.lastName,
-      rollNumber,
+      defaultIdentity,
       user?.creatorName || user?.id || "Not available"
     );
 
@@ -152,8 +152,8 @@ export default function Profile() {
       <div className="border-2 border-primary/30 bg-card p-6 md:p-8">
         <div className="mb-6 grid grid-cols-1 gap-4 border-b border-primary/20 pb-6 font-mono md:grid-cols-2">
           <div className="space-y-1">
-            <div className="text-xs uppercase tracking-widest text-primary">Roll Number</div>
-            <div className="text-sm text-foreground">{rollNumber || "Unavailable"}</div>
+            <div className="text-xs uppercase tracking-widest text-primary">Default NITT Identity</div>
+            <div className="text-sm text-foreground">{defaultIdentity || "Unavailable"}</div>
           </div>
           <div className="space-y-1">
             <div className="text-xs uppercase tracking-widest text-primary">Projects Show You As</div>

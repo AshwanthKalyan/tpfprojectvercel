@@ -34,7 +34,7 @@ export default function UserProfile() {
       ? `${user.firstName} ${user.lastName}`.trim()
       : "";
   const displayName =
-    fullName || user.creatorName || user.email?.split("@")[0] || "Project Creator";
+    fullName || user.creatorName || user.email || "Project Creator";
 
   return (
     <div className="space-y-8 max-w-4xl mx-auto">

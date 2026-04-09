@@ -30,18 +30,39 @@ export function useUpdateProfile() {
   return useMutation({
 
     mutationFn: async (data: Partial<UpdateUser>) => {
+      const body = JSON.stringify(data);
 
-      const response = await authedFetch("/api/users/profile", {
+      let response = await authedFetch("/api/profile", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(data),
+        body,
       });
+
+      if (response.status === 404) {
+        response = await authedFetch("/api/users/profile", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body,
+        });
+      }
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(text || "Failed to update profile");
+        const message = text
+          ? (() => {
+              try {
+                const parsed = JSON.parse(text);
+                return parsed?.message || text;
+              } catch {
+                return text;
+              }
+            })()
+          : "Failed to update profile";
+        throw new Error(message);
       }
 
       return response.json();

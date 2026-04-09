@@ -125,7 +125,14 @@ function getCreatorDisplayName(params: {
       ? `${params.firstName} ${params.lastName}`.trim()
       : null;
 
-  return fullName || getRollNumber(params.email) || params.firstName || params.lastName || params.fallbackId;
+  return (
+    fullName ||
+    params.email ||
+    getRollNumber(params.email) ||
+    params.firstName ||
+    params.lastName ||
+    params.fallbackId
+  );
 }
 
 function normalizeUserRow(row: Record<string, any> | null, authUser?: AuthUser | null) {
@@ -168,6 +175,21 @@ async function getUserById(userId: string) {
     return result.rows[0] ?? null;
   } catch (error) {
     console.error("User by id query failed:", error);
+    return null;
+  }
+}
+
+async function getUserByEmail(email: string | null | undefined) {
+  const db = getPool();
+  if (!db || !email) {
+    return null;
+  }
+
+  try {
+    const result = await db.query("SELECT * FROM users WHERE email=$1", [email]);
+    return result.rows[0] ?? null;
+  } catch (error) {
+    console.error("User by email query failed:", error);
     return null;
   }
 }
@@ -269,6 +291,11 @@ async function ensureUser(authUser: AuthUser) {
     return (await getUserById(authUser.userId)) ?? existingUser;
   }
 
+  const existingUserByEmail = await getUserByEmail(authUser.email);
+  if (existingUserByEmail) {
+    return existingUserByEmail;
+  }
+
   if (!authUser.email) {
     return null;
   }
@@ -297,6 +324,11 @@ async function ensureUser(authUser: AuthUser) {
   );
 
   return await getUserById(authUser.userId);
+}
+
+async function getEffectiveUserId(authUser: AuthUser) {
+  const user = await ensureUser(authUser);
+  return user?.id ?? authUser.userId;
 }
 
 async function getCurrentUser(authUser: AuthUser | null) {
@@ -493,12 +525,14 @@ async function getApplicationsForProject(projectId: number, authUser: AuthUser |
     return [];
   }
 
+  const effectiveUserId = await getEffectiveUserId(authUser);
+
   const project = await getProjectById(projectId);
   if (!project) {
     return [];
   }
 
-  const isOwner = project.owner_id === authUser.userId;
+  const isOwner = project.owner_id === effectiveUserId;
 
   try {
     if (isOwner) {
@@ -551,7 +585,7 @@ async function getApplicationsForProject(projectId: number, authUser: AuthUser |
        FROM applications
        WHERE project_id=$1 AND applicant_id=$2
        ORDER BY created_at DESC`,
-      [projectId, authUser.userId]
+      [projectId, effectiveUserId]
     );
 
     return result.rows.map((row) => ({
@@ -575,21 +609,21 @@ async function createApplication(projectId: number, body: any, authUser: AuthUse
     throw new Error("DATABASE_URL is not set");
   }
 
+  const effectiveUserId = await getEffectiveUserId(authUser);
+
   const project = await getProjectById(projectId);
   if (!project) {
     throw new Error("Project not found");
   }
 
-  if (project.owner_id === authUser.userId) {
+  if (project.owner_id === effectiveUserId) {
     throw new Error("Cannot apply to your own project");
   }
-
-  await ensureUser(authUser);
 
   try {
     const existing = await db.query(
       "SELECT id FROM applications WHERE project_id=$1 AND applicant_id=$2",
-      [projectId, authUser.userId]
+      [projectId, effectiveUserId]
     );
 
     if (existing.rows[0]) {
@@ -607,7 +641,7 @@ async function createApplication(projectId: number, body: any, authUser: AuthUse
       (project_id, applicant_id, resume_url, message, status)
      VALUES ($1, $2, $3, $4, 'pending')
      RETURNING *`,
-    [projectId, authUser.userId, body.resumeUrl ?? null, body.message ?? null]
+    [projectId, effectiveUserId, body.resumeUrl ?? null, body.message ?? null]
   );
 
   const row = result.rows[0];
@@ -628,12 +662,14 @@ async function updateProject(projectId: number, body: any, authUser: AuthUser) {
     throw new Error("DATABASE_URL is not set");
   }
 
+  const effectiveUserId = await getEffectiveUserId(authUser);
+
   const project = await getProjectById(projectId);
   if (!project) {
     throw new Error("Project not found");
   }
 
-  if (project.owner_id !== authUser.userId) {
+  if (project.owner_id !== effectiveUserId) {
     throw new Error("Not authorized");
   }
 
@@ -660,7 +696,7 @@ async function updateProject(projectId: number, body: any, authUser: AuthUser) {
   }
 
   values.push(projectId);
-  values.push(authUser.userId);
+  values.push(effectiveUserId);
 
   const result = await db.query(
     `UPDATE projects
@@ -679,12 +715,14 @@ async function deleteProject(projectId: number, authUser: AuthUser) {
     throw new Error("DATABASE_URL is not set");
   }
 
+  const effectiveUserId = await getEffectiveUserId(authUser);
+
   const project = await getProjectById(projectId);
   if (!project) {
     throw new Error("Project not found");
   }
 
-  if (project.owner_id !== authUser.userId) {
+  if (project.owner_id !== effectiveUserId) {
     throw new Error("Not authorized");
   }
 
@@ -696,7 +734,7 @@ async function deleteProject(projectId: number, authUser: AuthUser) {
 
   await db.query("DELETE FROM projects WHERE id=$1 AND owner_id=$2", [
     projectId,
-    authUser.userId,
+    effectiveUserId,
   ]);
 }
 
@@ -710,6 +748,8 @@ async function updateApplicationStatus(
     throw new Error("DATABASE_URL is not set");
   }
 
+  const effectiveUserId = await getEffectiveUserId(authUser);
+
   const result = await db.query(
     `UPDATE applications a
      SET status=$1
@@ -721,7 +761,7 @@ async function updateApplicationStatus(
            AND p.owner_id = $3
        )
      RETURNING *`,
-    [status, applicationId, authUser.userId]
+    [status, applicationId, effectiveUserId]
   );
 
   if (!result.rows[0]) {
@@ -757,7 +797,10 @@ export default async function handler(req: any, res: any) {
       return sendJson(res, 200, { message: "Logged out" });
     }
 
-    if (method === "PUT" && path === "/api/users/profile") {
+    if (
+      method === "PUT" &&
+      (path === "/api/users/profile" || path === "/api/profile")
+    ) {
       if (!authUser) {
         return sendJson(res, 401, { message: "Not logged in" });
       }
@@ -834,7 +877,8 @@ export default async function handler(req: any, res: any) {
         return sendJson(res, 200, []);
       }
 
-      const projects = await getProjectsForOwner(authUser.userId);
+      const effectiveUserId = await getEffectiveUserId(authUser);
+      const projects = await getProjectsForOwner(effectiveUserId);
       return sendJson(res, 200, projects);
     }
 
