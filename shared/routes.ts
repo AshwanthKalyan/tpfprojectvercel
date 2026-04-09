@@ -76,7 +76,7 @@ export const api = {
     },
     listForUser: {
       method: 'GET' as const,
-      path: '/api/users/applications' as const,
+      path: '/api/my-applications' as const,
       responses: {
         200: z.array(z.custom<typeof applications.$inferSelect & { project: typeof projects.$inferSelect }>()),
         401: errorSchemas.unauthorized,
