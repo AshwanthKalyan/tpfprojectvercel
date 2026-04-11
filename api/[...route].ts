@@ -272,6 +272,34 @@ async function getTableColumns(tableName: string) {
   return columnsPromise;
 }
 
+async function getApplicantProfileSelectSql(alias: string) {
+  const userColumns = await getTableColumns("users");
+  const field = (column: string, sql: string, fallback: string) =>
+    userColumns.has(column) ? sql : fallback;
+
+  return [
+    `${alias}.id AS user_id`,
+    field("email", `${alias}.email`, "NULL::text AS email"),
+    field("first_name", `${alias}.first_name`, "NULL::text AS first_name"),
+    field("last_name", `${alias}.last_name`, "NULL::text AS last_name"),
+    field("department", `${alias}.department`, "NULL::text AS department"),
+    field(
+      "year_of_study",
+      `${alias}.year_of_study`,
+      "NULL::integer AS year_of_study"
+    ),
+    field("year", `${alias}.year`, "NULL::integer AS year"),
+    field("skills", `${alias}.skills`, "NULL::text[] AS skills"),
+    field("bio", `${alias}.bio`, "NULL::text AS bio"),
+    field("github_url", `${alias}.github_url`, "NULL::text AS github_url"),
+    field(
+      "resume_url",
+      `${alias}.resume_url AS user_resume_url`,
+      "NULL::text AS user_resume_url"
+    ),
+  ].join(",\n          ");
+}
+
 async function reassignUserReferences(sourceUserId: string, targetUserId: string) {
   const db = getPool();
   if (!db || !sourceUserId || !targetUserId || sourceUserId === targetUserId) {
@@ -731,20 +759,11 @@ async function getApplicationsForProject(projectId: number, authUser: AuthUser |
 
   try {
     if (isOwner) {
+      const applicantProfileSelect = await getApplicantProfileSelectSql("u");
       const result = await db.query(
         `SELECT
           a.*,
-          u.id AS user_id,
-          u.email,
-          u.first_name,
-          u.last_name,
-          u.department,
-          u.year_of_study,
-          u.year,
-          u.skills,
-          u.bio,
-          u.github_url,
-          u.resume_url AS user_resume_url
+          ${applicantProfileSelect}
          FROM applications a
          LEFT JOIN users u ON a.applicant_id = u.id
          WHERE a.project_id = $1
@@ -855,6 +874,7 @@ async function getApplicationsToMyProjects(authUser: AuthUser | null) {
   }
 
   try {
+    const applicantProfileSelect = await getApplicantProfileSelectSql("u");
     const result = await db.query(
       `SELECT
         a.id,
@@ -865,17 +885,7 @@ async function getApplicationsToMyProjects(authUser: AuthUser | null) {
         a.status,
         a.created_at,
         p.title AS project_title,
-        u.id AS user_id,
-        u.email,
-        u.first_name,
-        u.last_name,
-        u.department,
-        u.year_of_study,
-        u.year,
-        u.skills,
-        u.bio,
-        u.github_url,
-        u.resume_url AS user_resume_url
+        ${applicantProfileSelect}
        FROM applications a
        JOIN projects p ON a.project_id = p.id
        LEFT JOIN users u ON a.applicant_id = u.id
