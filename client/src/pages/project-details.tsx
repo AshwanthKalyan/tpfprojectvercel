@@ -57,6 +57,7 @@ export default function ProjectDetails() {
   const [showApply, setShowApply] = useState(false);
   const [editing, setEditing] = useState(false);
   const editFormRef = useRef<HTMLDivElement | null>(null);
+  const applyFormRef = useRef<HTMLFormElement | null>(null);
 
   const normalizeUrl = (url: string) => {
     if (!url) return "";
@@ -102,10 +103,8 @@ export default function ProjectDetails() {
   };
   /* ---------------- APPLY ---------------- */
 
-  const handleApply = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-
-    const fd = new FormData(e.currentTarget);
+  const submitApplication = (form: HTMLFormElement) => {
+    const fd = new FormData(form);
 
     applyMutation.mutate(
       {
@@ -129,6 +128,21 @@ export default function ProjectDetails() {
         },
       }
     );
+  };
+
+  const handleApply = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    submitApplication(e.currentTarget);
+  };
+
+  const handleApplyClick = () => {
+    const form = applyFormRef.current;
+    if (!form || !form.reportValidity()) {
+      return;
+    }
+
+    submitApplication(form);
   };
 
   /* ---------------- UPDATE PROJECT ---------------- */
@@ -224,6 +238,7 @@ export default function ProjectDetails() {
           <div className="flex gap-3 mb-6">
 
             <button
+              type="button"
               onClick={() => {
                 setEditing(true);
                 toast({
@@ -238,6 +253,7 @@ export default function ProjectDetails() {
             </button>
 
             <button
+              type="button"
               onClick={handleDelete}
               className="border border-red-500 text-red-500 px-4 py-2 flex items-center gap-2 hover:bg-red-500 hover:text-white"
             >
@@ -351,12 +367,14 @@ export default function ProjectDetails() {
         {!isCreator && !showApply && (
           <div className="mt-8 flex justify-end gap-3">
             <button
+              type="button"
               onClick={() => setLocation("/projects")}
               className="border border-primary/40 px-6 py-2"
             >
               Not Now
             </button>
             <button
+              type="button"
               onClick={() => setShowApply(true)}
               className="bg-primary text-black px-6 py-2 flex items-center gap-2"
             >
@@ -373,6 +391,7 @@ export default function ProjectDetails() {
                 APPLICATION SENT
               </div>
               <button
+                type="button"
                 onClick={() => setShowApply(true)}
                 className="border border-primary px-4 py-2"
               >
@@ -447,7 +466,7 @@ export default function ProjectDetails() {
 
           <h2 className="text-xl mb-4">{hasApplied ? "Reapply" : "Apply"}</h2>
 
-          <form onSubmit={handleApply} className="space-y-4">
+          <form ref={applyFormRef} onSubmit={handleApply} className="space-y-4">
 
             <input
               name="resumeUrl"
@@ -471,10 +490,16 @@ export default function ProjectDetails() {
               </button>
 
               <button
-                type="submit"
-                className="bg-primary text-black px-6 py-2"
+                type="button"
+                onClick={handleApplyClick}
+                disabled={applyMutation.isPending}
+                className="bg-primary text-black px-6 py-2 disabled:opacity-50"
               >
-                {hasApplied ? "Send Reapplication" : "Send"}
+                {applyMutation.isPending
+                  ? "Sending..."
+                  : hasApplied
+                    ? "Send Reapplication"
+                    : "Send"}
               </button>
 
             </div>
@@ -521,6 +546,7 @@ export default function ProjectDetails() {
                 <div className="flex gap-2">
 
                   <button
+                    type="button"
                     onClick={() =>
                       updateStatusMutation.mutate({
                         id: app.id,
@@ -533,6 +559,7 @@ export default function ProjectDetails() {
                   </button>
 
                   <button
+                    type="button"
                     onClick={() =>
                       updateStatusMutation.mutate({
                         id: app.id,

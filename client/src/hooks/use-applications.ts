@@ -4,6 +4,41 @@ import { api } from "@shared/routes";
 import type { InsertApplication } from "@shared/schema";
 import { useAuthedFetch } from "@/lib/authed-fetch";
 
+async function getApiErrorMessage(res: Response, fallback: string) {
+  const contentType = res.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    try {
+      const body = await res.json();
+      if (body && typeof body.message === "string" && body.message.trim()) {
+        return body.message;
+      }
+    } catch {
+      return fallback;
+    }
+  }
+
+  const text = (await res.text()).trim();
+  if (!text) {
+    return fallback;
+  }
+
+  try {
+    const body = JSON.parse(text);
+    if (body && typeof body.message === "string" && body.message.trim()) {
+      return body.message;
+    }
+  } catch {
+    // Fall back to plain text below.
+  }
+
+  if (text.startsWith("<!DOCTYPE") || text.startsWith("<html")) {
+    return fallback;
+  }
+
+  return text;
+}
+
 export function useProjectApplications(projectId: number) {
   const authedFetch = useAuthedFetch();
   const { isLoaded, isSignedIn } = useAuth();
@@ -71,8 +106,7 @@ export function useCreateApplication(projectId: number) {
         body: JSON.stringify(data),
       });
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || "Failed to apply");
+        throw new Error(await getApiErrorMessage(res, "Failed to apply"));
       }
       return await res.json();
     },
@@ -97,8 +131,7 @@ export function useUpdateApplicationStatus() {
         body: JSON.stringify({ status }),
       });
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || "Failed to update status");
+        throw new Error(await getApiErrorMessage(res, "Failed to update status"));
       }
       return await res.json();
     },

@@ -44,7 +44,7 @@ export default function MyApplications() {
           const applicantName =
             app.applicant?.firstName || app.applicant?.lastName
               ? `${app.applicant?.firstName || ""} ${app.applicant?.lastName || ""}`.trim()
-              : "Unknown";
+              : app.applicant?.email || app.applicantId || "Unknown";
 
           return (
 
@@ -85,6 +85,7 @@ export default function MyApplications() {
 
               <div className="flex items-center gap-3">
                 <button
+                  type="button"
                   onClick={() => setOpenId(isOpen ? null : app.applicationId)}
                   className="px-4 py-2 border border-primary/40 text-sm uppercase font-bold flex items-center gap-2 hover:bg-primary/10"
                 >
@@ -107,6 +108,7 @@ export default function MyApplications() {
                 {app.status === "pending" && (
                   <div className="flex gap-2">
                     <button
+                      type="button"
                       onClick={() =>
                         updateStatus.mutate({ id: app.applicationId, status: "accepted" })
                       }
@@ -116,6 +118,7 @@ export default function MyApplications() {
                       <CheckCircle className="h-5 w-5" />
                     </button>
                     <button
+                      type="button"
                       onClick={() =>
                         updateStatus.mutate({ id: app.applicationId, status: "rejected" })
                       }

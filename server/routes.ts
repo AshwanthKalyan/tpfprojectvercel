@@ -850,7 +850,27 @@ export async function registerRoutes(app: Express) {
       );
 
       if (existing.rows[0]) {
-        return res.status(409).json({ message: "Already applied" });
+        const updated = await pool.query(
+          `UPDATE applications
+           SET applicant_id=$2,
+               resume_url=$3,
+               message=$4,
+               status='pending'
+           WHERE id=$1
+           RETURNING *`,
+          [existing.rows[0].id, req.user.id, resumeUrl || null, message || null]
+        );
+
+        const row = updated.rows[0];
+        return res.status(201).json({
+          id: row.id,
+          projectId: row.project_id,
+          applicantId: row.applicant_id,
+          resumeUrl: row.resume_url,
+          message: row.message,
+          status: row.status,
+          createdAt: row.created_at,
+        });
       }
 
       const result = await pool.query(
@@ -1009,7 +1029,27 @@ export async function registerRoutes(app: Express) {
       );
 
       if (existing.rows[0]) {
-        return res.status(409).json({ message: "Already applied" });
+        const updated = await pool.query(
+          `UPDATE applications
+           SET applicant_id=$2,
+               resume_url=$3,
+               message=$4,
+               status='pending'
+           WHERE id=$1
+           RETURNING *`,
+          [existing.rows[0].id, req.user.id, resumeUrl || null, message || null]
+        );
+
+        const row = updated.rows[0];
+        return res.status(201).json({
+          id: row.id,
+          projectId: row.project_id,
+          applicantId: row.applicant_id,
+          resumeUrl: row.resume_url,
+          message: row.message,
+          status: row.status,
+          createdAt: row.created_at,
+        });
       }
 
       const result = await pool.query(
