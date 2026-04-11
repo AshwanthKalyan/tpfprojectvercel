@@ -46,7 +46,7 @@ export function useProjectApplications(projectId: number) {
   return useQuery({
     queryKey: [api.applications.listForProject.path, projectId, user?.id ?? null],
     queryFn: async () => {
-      const url = `/api/projects/${projectId}/applications`;
+      const url = `/api/project-applications?projectId=${projectId}`;
       const res = await authedFetch(url);
       if (!res.ok) throw new Error("Failed to fetch applications");
       return await res.json();
@@ -99,7 +99,7 @@ export function useCreateApplication(projectId: number) {
   const authedFetch = useAuthedFetch();
   return useMutation({
     mutationFn: async (data: Omit<InsertApplication, "projectId" | "applicantId" | "status">) => {
-      const url = `/api/projects/${projectId}/applications`;
+      const url = `/api/project-applications?projectId=${projectId}`;
       const res = await authedFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -124,7 +124,7 @@ export function useUpdateApplicationStatus() {
   const authedFetch = useAuthedFetch();
   return useMutation({
     mutationFn: async ({ id, status }: { id: number; status: "pending" | "accepted" | "rejected" }) => {
-      const url = `/api/applications/${id}/status`;
+      const url = `/api/application-status?id=${id}`;
       const res = await authedFetch(url, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
