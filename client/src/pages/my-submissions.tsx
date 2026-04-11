@@ -18,7 +18,7 @@ export default function MySubmissions() {
       {/* HEADER */}
       <div>
         <h1 className="text-4xl font-display border-l-4 border-primary pl-4 uppercase">
-          My Submissions
+          My Applications
         </h1>
 
         <p className="text-muted-foreground mt-2 pl-5 font-mono">
